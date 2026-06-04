@@ -1,0 +1,2023 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>霓虹迷宫大逃亡</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html, body {
+            width: 100%;
+            height: 100%;
+            background: #0a0a1a;
+            overflow: hidden;
+            font-family: 'Consolas', 'Monaco', monospace;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #gameContainer {
+            position: relative;
+            width: 800px;
+            height: 600px;
+            transform-origin: center center;
+        }
+
+        #gameCanvas {
+            display: block;
+            background: #0a0a1a;
+            image-rendering: pixelated;
+        }
+
+        .scanline {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            background: repeating-linear-gradient(
+                0deg,
+                rgba(0, 0, 0, 0.1) 0px,
+                rgba(0, 0, 0, 0.1) 1px,
+                transparent 1px,
+                transparent 2px
+            );
+            opacity: 0.3;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        <div class="scanline"></div>
+    </div>
+
+    <script>
+    // =========================================================================
+    // 霓虹迷宫大逃亡 - Neon Maze Escape
+    // 纯HTML5 Canvas实现，无外部依赖
+    // =========================================================================
+
+    'use strict';
+
+    // =========================================================================
+    // 常量配置对象 - 方便调整游戏参数
+    // =========================================================================
+    const CONFIG = {
+        // 画布设置
+        LOGICAL_WIDTH: 800,
+        LOGICAL_HEIGHT: 600,
+        
+        // 迷宫设置
+        CELL_SIZE: 40,
+        MAZE_WIDTH: 15,
+        MAZE_HEIGHT: 11,
+        WALL_THICKNESS: 3,
+        
+        // 玩家设置
+        PLAYER_RADIUS: 12,
+        PLAYER_SPEED: 2.5,
+        PLAYER_BOOST_SPEED: 5.0,
+        MAX_ENERGY: 100,
+        ENERGY_DRAIN: 0.4,
+        ENERGY_REGEN: 0.05,
+        
+        // 敌人设置
+        ENEMY_RADIUS: 14,
+        PATROL_SPEED: 1.5,
+        CHASE_SPEED: 2.0,
+        TELEPORT_SPEED: 1.8,
+        VISION_RANGE: 3,
+        TELEPORT_INTERVAL: 5000,
+        TELEPORT_WARNING: 1500,
+        
+        // 能量核心设置
+        CORE_RADIUS: 10,
+        CORE_COUNT_MIN: 5,
+        CORE_COUNT_MAX: 8,
+        CORE_ENERGY_VALUE: 25,
+        CORE_SCORE_VALUE: 100,
+        
+        // 视觉效果
+        FOG_RADIUS: 140,
+        TRAIL_LENGTH: 15,
+        GLOW_INTENSITY: 20,
+        SHAKE_DURATION: 300,
+        SHAKE_INTENSITY: 8,
+        
+        // 颜色配置 - 霓虹风格
+        COLORS: {
+            BACKGROUND: '#0a0a1a',
+            WALL: '#9933ff',
+            WALL_GLOW: '#cc66ff',
+            PLAYER: '#00ffff',
+            PLAYER_GLOW: '#66ffff',
+            ENEMY: '#ff0055',
+            ENEMY_GLOW: '#ff6699',
+            ENEMY_VISION: 'rgba(255, 0, 85, 0.15)',
+            CORE: '#ffff00',
+            CORE_GLOW: '#ffff99',
+            EXIT: '#00ff66',
+            EXIT_GLOW: '#66ff99',
+            TEXT: '#ffffff',
+            HUD_BG: 'rgba(10, 10, 26, 0.8)'
+        },
+
+        // 运行时动态设置
+        MAZE_OFFSET_X: 0,
+        MAZE_OFFSET_Y: 0
+    };
+
+    // 游戏状态枚举
+    const GameState = {
+        MENU: 'menu',
+        PLAYING: 'playing',
+        PAUSED: 'paused',
+        GAMEOVER: 'gameover'
+    };
+
+    // 方向常量
+    const Direction = {
+        TOP: 0,
+        RIGHT: 1,
+        BOTTOM: 2,
+        LEFT: 3,
+        NONE: -1
+    };
+
+    const DIR_VECTORS = [
+        { x: 0, y: -1 }, // TOP
+        { x: 1, y: 0 },  // RIGHT
+        { x: 0, y: 1 },  // BOTTOM
+        { x: -1, y: 0 }  // LEFT
+    ];
+
+    // =========================================================================
+    // 工具函数
+    // =========================================================================
+    const Utils = {
+        // 随机整数 [min, max]
+        randomInt(min, max) {
+            return Math.floor(Math.random() * (max - min + 1)) + min;
+        },
+        
+        // 随机浮点数 [min, max)
+        randomFloat(min, max) {
+            return Math.random() * (max - min) + min;
+        },
+        
+        // 随机选择数组元素
+        randomChoice(arr) {
+            return arr[Math.floor(Math.random() * arr.length)];
+        },
+        
+        // 打乱数组
+        shuffle(arr) {
+            const result = [...arr];
+            for (let i = result.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [result[i], result[j]] = [result[j], result[i]];
+            }
+            return result;
+        },
+        
+        // 限制数值范围
+        clamp(value, min, max) {
+            return Math.max(min, Math.min(max, value));
+        },
+        
+        // 距离计算
+        distance(x1, y1, x2, y2) {
+            const dx = x2 - x1;
+            const dy = y2 - y1;
+            return Math.sqrt(dx * dx + dy * dy);
+        },
+        
+        // 曼哈顿距离（用于寻路）
+        manhattanDistance(x1, y1, x2, y2) {
+            return Math.abs(x2 - x1) + Math.abs(y2 - y1);
+        },
+        
+        // 线性插值
+        lerp(a, b, t) {
+            return a + (b - a) * t;
+        },
+        
+        // 缓动函数
+        easeOutQuad(t) {
+            return t * (2 - t);
+        }
+    };
+
+    // =========================================================================
+    // 迷宫单元格类
+    // =========================================================================
+    class Cell {
+        constructor(x, y) {
+            this.x = x;
+            this.y = y;
+            this.walls = [true, true, true, true]; // top, right, bottom, left
+            this.visited = false;
+            this.isOnMainPath = false;
+        }
+    }
+
+    // =========================================================================
+    // 迷宫生成器 - 递归回溯算法
+    // 算法思路：
+    // 1. 创建所有单元格都有四面墙的网格
+    // 2. 使用栈进行深度优先搜索，随机选择方向打通墙壁
+    // 3. 主路径生成后，随机打通额外墙壁创建死胡同分支
+    // =========================================================================
+    class Maze {
+        constructor(width, height) {
+            this.width = width;
+            this.height = height;
+            this.cells = [];
+            this.startCell = null;
+            this.endCell = null;
+            this.mainPath = [];
+            this.offsetX = (CONFIG.LOGICAL_WIDTH - width * CONFIG.CELL_SIZE) / 2;
+            this.offsetY = (CONFIG.LOGICAL_HEIGHT - height * CONFIG.CELL_SIZE) / 2;
+        }
+
+        // 生成迷宫
+        generate() {
+            this._initCells();
+            this._generateMainPath();
+            this._addDeadEnds();
+            this._setStartAndEnd();
+        }
+
+        // 初始化单元格
+        _initCells() {
+            this.cells = [];
+            for (let y = 0; y < this.height; y++) {
+                const row = [];
+                for (let x = 0; x < this.width; x++) {
+                    row.push(new Cell(x, y));
+                }
+                this.cells.push(row);
+            }
+        }
+
+        // 递归回溯生成主路径（使用栈迭代实现，避免递归深度问题）
+        _generateMainPath() {
+            const startX = 0;
+            const startY = Math.floor(this.height / 2);
+            const startCell = this.getCell(startX, startY);
+            startCell.visited = true;
+            startCell.isOnMainPath = true;
+            
+            const stack = [startCell];
+            this.mainPath = [startCell];
+
+            while (stack.length > 0) {
+                const current = stack[stack.length - 1];
+                const neighbors = this._getUnvisitedNeighbors(current);
+
+                if (neighbors.length > 0) {
+                    const next = Utils.randomChoice(neighbors);
+                    this._removeWall(current, next);
+                    next.visited = true;
+                    next.isOnMainPath = true;
+                    stack.push(next);
+                    this.mainPath.push(next);
+                } else {
+                    stack.pop();
+                }
+            }
+        }
+
+        // 添加2-3条死胡同分支
+        _addDeadEnds() {
+            const branchCount = Utils.randomInt(2, 3);
+            const pathCells = this.mainPath.filter(c => !this._isEdgeCell(c));
+            
+            for (let i = 0; i < branchCount; i++) {
+                const branchStart = Utils.randomChoice(pathCells);
+                this._growBranch(branchStart);
+            }
+        }
+
+        // 从指定单元格生长分支
+        _growBranch(startCell) {
+            let current = startCell;
+            const branchLength = Utils.randomInt(2, 4);
+            
+            for (let i = 0; i < branchLength; i++) {
+                const neighbors = this._getUnvisitedNeighbors(current);
+                if (neighbors.length === 0) break;
+                
+                const next = Utils.randomChoice(neighbors);
+                this._removeWall(current, next);
+                next.visited = true;
+                current = next;
+            }
+        }
+
+        // 设置起点和终点
+        _setStartAndEnd() {
+            this.startCell = this.getCell(0, Math.floor(this.height / 2));
+            this.endCell = this.getCell(this.width - 1, Math.floor(this.height / 2));
+        }
+
+        // 获取未访问的相邻单元格
+        _getUnvisitedNeighbors(cell) {
+            const neighbors = [];
+            for (let dir = 0; dir < 4; dir++) {
+                const nx = cell.x + DIR_VECTORS[dir].x;
+                const ny = cell.y + DIR_VECTORS[dir].y;
+                const neighbor = this.getCell(nx, ny);
+                if (neighbor && !neighbor.visited) {
+                    neighbors.push(neighbor);
+                }
+            }
+            return Utils.shuffle(neighbors);
+        }
+
+        // 移除两单元格之间的墙
+        _removeWall(cell1, cell2) {
+            const dx = cell2.x - cell1.x;
+            const dy = cell2.y - cell1.y;
+
+            if (dx === 1) {
+                cell1.walls[Direction.RIGHT] = false;
+                cell2.walls[Direction.LEFT] = false;
+            } else if (dx === -1) {
+                cell1.walls[Direction.LEFT] = false;
+                cell2.walls[Direction.RIGHT] = false;
+            } else if (dy === 1) {
+                cell1.walls[Direction.BOTTOM] = false;
+                cell2.walls[Direction.TOP] = false;
+            } else if (dy === -1) {
+                cell1.walls[Direction.TOP] = false;
+                cell2.walls[Direction.BOTTOM] = false;
+            }
+        }
+
+        // 判断是否为边缘单元格
+        _isEdgeCell(cell) {
+            return cell.x === 0 || cell.x === this.width - 1 || 
+                   cell.y === 0 || cell.y === this.height - 1;
+        }
+
+        // 获取指定坐标的单元格
+        getCell(x, y) {
+            if (x < 0 || x >= this.width || y < 0 || y >= this.height) {
+                return null;
+            }
+            return this.cells[y][x];
+        }
+
+        // 检查从单元格是否可以向指定方向移动
+        canMove(cellX, cellY, direction) {
+            const cell = this.getCell(cellX, cellY);
+            return cell && !cell.walls[direction];
+        }
+
+        // 检查像素位置的移动碰撞
+        checkCollision(x, y, radius, dx, dy) {
+            const result = { x: true, y: true };
+            
+            const newX = x + dx;
+            const newY = y + dy;
+            
+            const corners = [
+                { x: newX - radius, y: y - radius },
+                { x: newX + radius, y: y - radius },
+                { x: newX - radius, y: y + radius },
+                { x: newX + radius, y: y + radius }
+            ];
+            
+            result.x = !corners.some(c => this._isPointInWall(c.x, c.y));
+            
+            corners[0].x = x - radius;
+            corners[0].y = newY - radius;
+            corners[1].x = x + radius;
+            corners[1].y = newY - radius;
+            corners[2].x = x - radius;
+            corners[2].y = newY + radius;
+            corners[3].x = x + radius;
+            corners[3].y = newY + radius;
+            
+            result.y = !corners.some(c => this._isPointInWall(c.x, c.y));
+            
+            return result;
+        }
+
+        // 检查点是否在墙内
+        _isPointInWall(px, py) {
+            const localX = px - this.offsetX;
+            const localY = py - this.offsetY;
+            
+            if (localX < 0 || localX >= this.width * CONFIG.CELL_SIZE ||
+                localY < 0 || localY >= this.height * CONFIG.CELL_SIZE) {
+                return true;
+            }
+            
+            const cellX = Math.floor(localX / CONFIG.CELL_SIZE);
+            const cellY = Math.floor(localY / CONFIG.CELL_SIZE);
+            const cell = this.getCell(cellX, cellY);
+            
+            if (!cell) return true;
+            
+            const innerX = localX - cellX * CONFIG.CELL_SIZE;
+            const innerY = localY - cellY * CONFIG.CELL_SIZE;
+            const thickness = CONFIG.WALL_THICKNESS;
+            
+            if (cell.walls[Direction.TOP] && innerY < thickness) return true;
+            if (cell.walls[Direction.BOTTOM] && innerY > CONFIG.CELL_SIZE - thickness) return true;
+            if (cell.walls[Direction.LEFT] && innerX < thickness) return true;
+            if (cell.walls[Direction.RIGHT] && innerX > CONFIG.CELL_SIZE - thickness) return true;
+            
+            return false;
+        }
+
+        // 获取随机可放置位置（不在墙上）
+        getRandomEmptyPosition(avoidCells = []) {
+            let attempts = 0;
+            while (attempts < 100) {
+                const cellX = Utils.randomInt(0, this.width - 1);
+                const cellY = Utils.randomInt(0, this.height - 1);
+                const cell = this.getCell(cellX, cellY);
+                
+                if (cell && !avoidCells.some(c => c.x === cellX && c.y === cellY)) {
+                    return {
+                        x: this.offsetX + cellX * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2,
+                        y: this.offsetY + cellY * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2,
+                        cellX,
+                        cellY
+                    };
+                }
+                attempts++;
+            }
+            return null;
+        }
+
+        // 渲染迷宫
+        render(ctx) {
+            ctx.save();
+            
+            for (let y = 0; y < this.height; y++) {
+                for (let x = 0; x < this.width; x++) {
+                    const cell = this.cells[y][x];
+                    const px = this.offsetX + x * CONFIG.CELL_SIZE;
+                    const py = this.offsetY + y * CONFIG.CELL_SIZE;
+                    
+                    ctx.fillStyle = '#1a1a2e';
+                    ctx.fillRect(px, py, CONFIG.CELL_SIZE, CONFIG.CELL_SIZE);
+                }
+            }
+            
+            ctx.shadowBlur = CONFIG.GLOW_INTENSITY;
+            ctx.shadowColor = CONFIG.COLORS.WALL_GLOW;
+            ctx.strokeStyle = CONFIG.COLORS.WALL;
+            ctx.lineWidth = CONFIG.WALL_THICKNESS;
+            
+            for (let y = 0; y < this.height; y++) {
+                for (let x = 0; x < this.width; x++) {
+                    const cell = this.cells[y][x];
+                    const px = this.offsetX + x * CONFIG.CELL_SIZE;
+                    const py = this.offsetY + y * CONFIG.CELL_SIZE;
+                    
+                    if (cell.walls[Direction.TOP]) {
+                        ctx.beginPath();
+                        ctx.moveTo(px, py);
+                        ctx.lineTo(px + CONFIG.CELL_SIZE, py);
+                        ctx.stroke();
+                    }
+                    if (cell.walls[Direction.LEFT]) {
+                        ctx.beginPath();
+                        ctx.moveTo(px, py);
+                        ctx.lineTo(px, py + CONFIG.CELL_SIZE);
+                        ctx.stroke();
+                    }
+                    if (cell.walls[Direction.BOTTOM] && y === this.height - 1) {
+                        ctx.beginPath();
+                        ctx.moveTo(px, py + CONFIG.CELL_SIZE);
+                        ctx.lineTo(px + CONFIG.CELL_SIZE, py + CONFIG.CELL_SIZE);
+                        ctx.stroke();
+                    }
+                    if (cell.walls[Direction.RIGHT] && x === this.width - 1) {
+                        ctx.beginPath();
+                        ctx.moveTo(px + CONFIG.CELL_SIZE, py);
+                        ctx.lineTo(px + CONFIG.CELL_SIZE, py + CONFIG.CELL_SIZE);
+                        ctx.stroke();
+                    }
+                }
+            }
+            
+            ctx.restore();
+            
+            this._renderExit(ctx);
+        }
+
+        // 渲染出口
+        _renderExit(ctx) {
+            if (!this.endCell) return;
+            
+            const px = this.offsetX + this.endCell.x * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2;
+            const py = this.offsetY + this.endCell.y * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2;
+            const pulse = Math.sin(Date.now() / 300) * 0.3 + 0.7;
+            
+            ctx.save();
+            ctx.shadowBlur = CONFIG.GLOW_INTENSITY * pulse;
+            ctx.shadowColor = CONFIG.COLORS.EXIT_GLOW;
+            ctx.fillStyle = CONFIG.COLORS.EXIT;
+            
+            ctx.beginPath();
+            ctx.arc(px, py, CONFIG.CORE_RADIUS * pulse, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.fillStyle = CONFIG.COLORS.TEXT;
+            ctx.font = 'bold 12px Consolas';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('出口', px, py);
+            
+            ctx.restore();
+        }
+
+        // BFS寻路算法 - 用于敌人追击
+        findPath(startX, startY, endX, endY) {
+            const start = this.getCell(startX, startY);
+            const end = this.getCell(endX, endY);
+            
+            if (!start || !end) return [];
+            
+            const queue = [start];
+            const visited = new Set();
+            const parent = new Map();
+            
+            visited.add(`${start.x},${start.y}`);
+            
+            while (queue.length > 0) {
+                const current = queue.shift();
+                
+                if (current.x === end.x && current.y === end.y) {
+                    return this._reconstructPath(parent, start, end);
+                }
+                
+                for (let dir = 0; dir < 4; dir++) {
+                    if (!current.walls[dir]) {
+                        const nx = current.x + DIR_VECTORS[dir].x;
+                        const ny = current.y + DIR_VECTORS[dir].y;
+                        const key = `${nx},${ny}`;
+                        
+                        if (!visited.has(key)) {
+                            const next = this.getCell(nx, ny);
+                            if (next) {
+                                visited.add(key);
+                                parent.set(key, current);
+                                queue.push(next);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            return [];
+        }
+
+        // 重构路径
+        _reconstructPath(parent, start, end) {
+            const path = [];
+            let current = end;
+            const startKey = `${start.x},${start.y}`;
+            
+            while (current) {
+                path.unshift(current);
+                const key = `${current.x},${current.y}`;
+                if (key === startKey) break;
+                current = parent.get(key);
+            }
+            
+            return path;
+        }
+    }
+
+    // =========================================================================
+    // 粒子类
+    // =========================================================================
+    class Particle {
+        constructor() {
+            this.reset();
+            this.active = false;
+        }
+
+        reset(x, y, vx, vy, color, life, size) {
+            this.x = x;
+            this.y = y;
+            this.vx = vx;
+            this.vy = vy;
+            this.color = color;
+            this.life = life;
+            this.maxLife = life;
+            this.size = size;
+            this.active = true;
+        }
+
+        update(deltaTime) {
+            if (!this.active) return;
+            
+            this.x += this.vx * deltaTime / 16;
+            this.y += this.vy * deltaTime / 16;
+            this.vx *= 0.98;
+            this.vy *= 0.98;
+            this.life -= deltaTime;
+            
+            if (this.life <= 0) {
+                this.active = false;
+            }
+        }
+
+        render(ctx) {
+            if (!this.active) return;
+            
+            const alpha = this.life / this.maxLife;
+            ctx.save();
+            ctx.globalAlpha = alpha;
+            ctx.fillStyle = this.color;
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = this.color;
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.size * alpha, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
+    }
+
+    // =========================================================================
+    // 粒子系统 - 使用对象池模式复用粒子，避免频繁GC
+    // =========================================================================
+    class ParticleSystem {
+        constructor(maxParticles = 200) {
+            this.pool = [];
+            this.activeParticles = [];
+            
+            for (let i = 0; i < maxParticles; i++) {
+                this.pool.push(new Particle());
+            }
+        }
+
+        // 获取池中的空闲粒子
+        _getParticle() {
+            for (const particle of this.pool) {
+                if (!particle.active) {
+                    return particle;
+                }
+            }
+            return this.pool[0];
+        }
+
+        // 发射粒子
+        emit(x, y, color, count = 10, speed = 3, life = 500, size = 4) {
+            for (let i = 0; i < count; i++) {
+                const particle = this._getParticle();
+                const angle = Utils.randomFloat(0, Math.PI * 2);
+                const spd = Utils.randomFloat(speed * 0.5, speed);
+                const vx = Math.cos(angle) * spd;
+                const vy = Math.sin(angle) * spd;
+                
+                particle.reset(x, y, vx, vy, color, life, size);
+                
+                if (!this.activeParticles.includes(particle)) {
+                    this.activeParticles.push(particle);
+                }
+            }
+        }
+
+        // 发射拖尾粒子
+        emitTrail(x, y, color) {
+            const particle = this._getParticle();
+            particle.reset(x, y, 0, 0, color, 200, CONFIG.PLAYER_RADIUS * 0.6);
+            
+            if (!this.activeParticles.includes(particle)) {
+                this.activeParticles.push(particle);
+            }
+        }
+
+        update(deltaTime) {
+            for (let i = this.activeParticles.length - 1; i >= 0; i--) {
+                const particle = this.activeParticles[i];
+                particle.update(deltaTime);
+                
+                if (!particle.active) {
+                    this.activeParticles.splice(i, 1);
+                }
+            }
+        }
+
+        render(ctx) {
+            for (const particle of this.activeParticles) {
+                particle.render(ctx);
+            }
+        }
+
+        clear() {
+            for (const particle of this.activeParticles) {
+                particle.active = false;
+            }
+            this.activeParticles = [];
+        }
+    }
+
+    // =========================================================================
+    // 玩家类
+    // =========================================================================
+    class Player {
+        constructor(x, y) {
+            this.x = x;
+            this.y = y;
+            this.radius = CONFIG.PLAYER_RADIUS;
+            this.energy = CONFIG.MAX_ENERGY;
+            this.isBoosting = false;
+            this.trailTimer = 0;
+            this.invincible = false;
+            this.invincibleTimer = 0;
+        }
+
+        update(keys, maze, deltaTime, audio) {
+            let dx = 0;
+            let dy = 0;
+
+            if (keys['KeyW'] || keys['ArrowUp']) dy -= 1;
+            if (keys['KeyS'] || keys['ArrowDown']) dy += 1;
+            if (keys['KeyA'] || keys['ArrowLeft']) dx -= 1;
+            if (keys['KeyD'] || keys['ArrowRight']) dx += 1;
+
+            if (dx !== 0 && dy !== 0) {
+                const len = Math.sqrt(dx * dx + dy * dy);
+                dx /= len;
+                dy /= len;
+            }
+
+            this.isBoosting = keys['Space'] && this.energy > 0;
+            const speed = this.isBoosting ? CONFIG.PLAYER_BOOST_SPEED : CONFIG.PLAYER_SPEED;
+
+            if (this.isBoosting) {
+                this.energy = Math.max(0, this.energy - CONFIG.ENERGY_DRAIN);
+            } else {
+                this.energy = Math.min(CONFIG.MAX_ENERGY, this.energy + CONFIG.ENERGY_REGEN);
+            }
+
+            const moveX = dx * speed;
+            const moveY = dy * speed;
+
+            const collision = maze.checkCollision(this.x, this.y, this.radius, moveX, moveY);
+
+            if (collision.x) this.x += moveX;
+            if (collision.y) this.y += moveY;
+
+            if ((dx !== 0 || dy !== 0) && (collision.x || collision.y)) {
+                this.trailTimer += deltaTime;
+                if (this.trailTimer > 30) {
+                    this.trailTimer = 0;
+                    return true;
+                }
+            }
+
+            if (this.invincible) {
+                this.invincibleTimer -= deltaTime;
+                if (this.invincibleTimer <= 0) {
+                    this.invincible = false;
+                }
+            }
+
+            return false;
+        }
+
+        addEnergy(amount) {
+            this.energy = Utils.clamp(this.energy + amount, 0, CONFIG.MAX_ENERGY);
+        }
+
+        takeDamage() {
+            if (this.invincible) return false;
+            this.invincible = true;
+            this.invincibleTimer = 1000;
+            return true;
+        }
+
+        render(ctx) {
+            ctx.save();
+            
+            const pulse = Math.sin(Date.now() / 200) * 0.2 + 0.8;
+            const alpha = this.invincible ? (Math.sin(Date.now() / 50) * 0.5 + 0.5) : 1;
+            
+            ctx.globalAlpha = alpha;
+            ctx.shadowBlur = CONFIG.GLOW_INTENSITY * pulse;
+            ctx.shadowColor = CONFIG.COLORS.PLAYER_GLOW;
+            ctx.fillStyle = CONFIG.COLORS.PLAYER;
+            
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.radius * 0.4, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.restore();
+        }
+    }
+
+    // =========================================================================
+    // 敌人基类
+    // =========================================================================
+    class Enemy {
+        constructor(x, y, type) {
+            this.x = x;
+            this.y = y;
+            this.type = type;
+            this.radius = CONFIG.ENEMY_RADIUS;
+            this.cellX = 0;
+            this.cellY = 0;
+            this._updateCellPosition();
+        }
+
+        _updateCellPosition() {
+            this.cellX = Math.floor((this.x - CONFIG.MAZE_OFFSET_X) / CONFIG.CELL_SIZE);
+            this.cellY = Math.floor((this.y - CONFIG.MAZE_OFFSET_Y) / CONFIG.CELL_SIZE);
+        }
+
+        // 检测与玩家的碰撞
+        checkCollision(player) {
+            const dist = Utils.distance(this.x, this.y, player.x, player.y);
+            return dist < this.radius + player.radius;
+        }
+
+        // 渲染警戒范围
+        renderVisionRange(ctx) {
+            ctx.save();
+            ctx.fillStyle = CONFIG.COLORS.ENEMY_VISION;
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, CONFIG.VISION_RANGE * CONFIG.CELL_SIZE, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
+
+        render(ctx) {
+            this.renderVisionRange(ctx);
+            
+            ctx.save();
+            ctx.shadowBlur = CONFIG.GLOW_INTENSITY;
+            ctx.shadowColor = CONFIG.COLORS.ENEMY_GLOW;
+            ctx.fillStyle = CONFIG.COLORS.ENEMY;
+            
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.fillStyle = '#000';
+            ctx.beginPath();
+            ctx.arc(this.x - 4, this.y - 2, 3, 0, Math.PI * 2);
+            ctx.arc(this.x + 4, this.y - 2, 3, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.fillStyle = '#fff';
+            ctx.beginPath();
+            ctx.arc(this.x - 4, this.y - 2, 1.5, 0, Math.PI * 2);
+            ctx.arc(this.x + 4, this.y - 2, 1.5, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.restore();
+        }
+    }
+
+    // =========================================================================
+    // 巡逻型敌人
+    // 算法：沿固定路径来回移动，视野3格内发现玩家后使用BFS追击
+    // =========================================================================
+    class PatrolEnemy extends Enemy {
+        constructor(x, y) {
+            super(x, y, 'patrol');
+            this.path = [];
+            this.pathIndex = 0;
+            this.direction = 1;
+            this.isChasing = false;
+            this.chasePath = [];
+            this.chaseTimer = 0;
+            this.moveTimer = 0;
+        }
+
+        setPatrolPath(path) {
+            this.path = path;
+            if (path.length > 0) {
+                this.x = path[0].x * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_X;
+                this.y = path[0].y * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_Y;
+                this._updateCellPosition();
+            }
+        }
+
+        update(player, maze, deltaTime) {
+            this._updateCellPosition();
+
+            const playerCellX = Math.floor((player.x - CONFIG.MAZE_OFFSET_X) / CONFIG.CELL_SIZE);
+            const playerCellY = Math.floor((player.y - CONFIG.MAZE_OFFSET_Y) / CONFIG.CELL_SIZE);
+            const distToPlayer = Utils.manhattanDistance(this.cellX, this.cellY, playerCellX, playerCellY);
+
+            if (distToPlayer <= CONFIG.VISION_RANGE && !this.isChasing) {
+                this.isChasing = true;
+                this.chasePath = maze.findPath(this.cellX, this.cellY, playerCellX, playerCellY);
+                this.chaseTimer = 3000;
+            }
+
+            if (this.isChasing) {
+                this.chaseTimer -= deltaTime;
+                if (this.chaseTimer <= 0 || this.chasePath.length === 0) {
+                    this.isChasing = false;
+                } else {
+                    this._chasePlayer(maze, deltaTime);
+                }
+            } else {
+                this._patrol(deltaTime);
+            }
+        }
+
+        _patrol(deltaTime) {
+            if (this.path.length < 2) return;
+
+            this.moveTimer += deltaTime;
+            if (this.moveTimer < 16) return;
+            this.moveTimer = 0;
+
+            const target = this.path[this.pathIndex];
+            const targetX = target.x * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_X;
+            const targetY = target.y * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_Y;
+
+            const dx = targetX - this.x;
+            const dy = targetY - this.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+
+            if (dist < 5) {
+                this.pathIndex += this.direction;
+                if (this.pathIndex >= this.path.length || this.pathIndex < 0) {
+                    this.direction *= -1;
+                    this.pathIndex += this.direction * 2;
+                }
+            } else {
+                const speed = CONFIG.PATROL_SPEED;
+                this.x += (dx / dist) * speed;
+                this.y += (dy / dist) * speed;
+            }
+        }
+
+        _chasePlayer(maze, deltaTime) {
+            if (this.chasePath.length === 0) return;
+
+            this.moveTimer += deltaTime;
+            if (this.moveTimer < 16) return;
+            this.moveTimer = 0;
+
+            const target = this.chasePath[0];
+            const targetX = target.x * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_X;
+            const targetY = target.y * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_Y;
+
+            const dx = targetX - this.x;
+            const dy = targetY - this.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+
+            if (dist < 5) {
+                this.chasePath.shift();
+            } else {
+                const speed = CONFIG.CHASE_SPEED;
+                this.x += (dx / dist) * speed;
+                this.y += (dy / dist) * speed;
+            }
+        }
+    }
+
+    // =========================================================================
+    // 追踪型敌人
+    // 算法：每帧计算玩家方向，使用贪心算法向玩家移动，遇墙尝试次优方向
+    // =========================================================================
+    class ChaseEnemy extends Enemy {
+        constructor(x, y) {
+            super(x, y, 'chase');
+            this.moveTimer = 0;
+        }
+
+        update(player, maze, deltaTime) {
+            this._updateCellPosition();
+            this.moveTimer += deltaTime;
+            
+            if (this.moveTimer < 16) return;
+            this.moveTimer = 0;
+
+            const playerCellX = Math.floor((player.x - CONFIG.MAZE_OFFSET_X) / CONFIG.CELL_SIZE);
+            const playerCellY = Math.floor((player.y - CONFIG.MAZE_OFFSET_Y) / CONFIG.CELL_SIZE);
+
+            const directions = [];
+            
+            if (playerCellX < this.cellX) directions.push(Direction.LEFT);
+            if (playerCellX > this.cellX) directions.push(Direction.RIGHT);
+            if (playerCellY < this.cellY) directions.push(Direction.TOP);
+            if (playerCellY > this.cellY) directions.push(Direction.BOTTOM);
+
+            if (Math.abs(playerCellX - this.cellX) > Math.abs(playerCellY - this.cellY)) {
+                directions.sort((a, b) => {
+                    const aHorizontal = (a === Direction.LEFT || a === Direction.RIGHT) ? 0 : 1;
+                    const bHorizontal = (b === Direction.LEFT || b === Direction.RIGHT) ? 0 : 1;
+                    return aHorizontal - bHorizontal;
+                });
+            }
+
+            let moved = false;
+            for (const dir of directions) {
+                if (maze.canMove(this.cellX, this.cellY, dir)) {
+                    const targetX = (this.cellX + DIR_VECTORS[dir].x) * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_X;
+                    const targetY = (this.cellY + DIR_VECTORS[dir].y) * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_Y;
+                    
+                    const dx = targetX - this.x;
+                    const dy = targetY - this.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    
+                    if (dist > 1) {
+                        const speed = CONFIG.CHASE_SPEED;
+                        this.x += (dx / dist) * speed;
+                        this.y += (dy / dist) * speed;
+                    }
+                    moved = true;
+                    break;
+                }
+            }
+
+            if (!moved) {
+                const allDirs = Utils.shuffle([0, 1, 2, 3]);
+                for (const dir of allDirs) {
+                    if (maze.canMove(this.cellX, this.cellY, dir)) {
+                        const targetX = (this.cellX + DIR_VECTORS[dir].x) * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_X;
+                        const targetY = (this.cellY + DIR_VECTORS[dir].y) * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_Y;
+                        
+                        const dx = targetX - this.x;
+                        const dy = targetY - this.y;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        
+                        if (dist > 1) {
+                            const speed = CONFIG.CHASE_SPEED;
+                            this.x += (dx / dist) * speed;
+                            this.y += (dy / dist) * speed;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // =========================================================================
+    // 瞬移型敌人
+    // 算法：每隔固定时间在玩家周围3-5格范围内随机选择可站立位置瞬移
+    // =========================================================================
+    class TeleportEnemy extends Enemy {
+        constructor(x, y) {
+            super(x, y, 'teleport');
+            this.teleportTimer = 0;
+            this.isWarning = false;
+            this.warningTimer = 0;
+            this.targetX = 0;
+            this.targetY = 0;
+            this.teleportInterval = CONFIG.TELEPORT_INTERVAL;
+        }
+
+        update(player, maze, deltaTime) {
+            this._updateCellPosition();
+
+            this.teleportTimer += deltaTime;
+
+            if (this.isWarning) {
+                this.warningTimer -= deltaTime;
+                if (this.warningTimer <= 0) {
+                    this.x = this.targetX;
+                    this.y = this.targetY;
+                    this._updateCellPosition();
+                    this.isWarning = false;
+                    this.teleportTimer = 0;
+                }
+                return;
+            }
+
+            if (this.teleportTimer >= this.teleportInterval) {
+                const playerCellX = Math.floor((player.x - CONFIG.MAZE_OFFSET_X) / CONFIG.CELL_SIZE);
+                const playerCellY = Math.floor((player.y - CONFIG.MAZE_OFFSET_Y) / CONFIG.CELL_SIZE);
+
+                const validPositions = [];
+                for (let dx = -5; dx <= 5; dx++) {
+                    for (let dy = -5; dy <= 5; dy++) {
+                        const dist = Math.abs(dx) + Math.abs(dy);
+                        if (dist >= 3 && dist <= 5) {
+                            const nx = playerCellX + dx;
+                            const ny = playerCellY + dy;
+                            const cell = maze.getCell(nx, ny);
+                            if (cell) {
+                                validPositions.push({ x: nx, y: ny });
+                            }
+                        }
+                    }
+                }
+
+                if (validPositions.length > 0) {
+                    const target = Utils.randomChoice(validPositions);
+                    this.targetX = target.x * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_X;
+                    this.targetY = target.y * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_Y;
+                    this.isWarning = true;
+                    this.warningTimer = CONFIG.TELEPORT_WARNING;
+                } else {
+                    this.teleportTimer = 0;
+                }
+            }
+
+            const playerCellX = Math.floor((player.x - CONFIG.MAZE_OFFSET_X) / CONFIG.CELL_SIZE);
+            const playerCellY = Math.floor((player.y - CONFIG.MAZE_OFFSET_Y) / CONFIG.CELL_SIZE);
+            
+            const directions = Utils.shuffle([0, 1, 2, 3]);
+            for (const dir of directions) {
+                if (maze.canMove(this.cellX, this.cellY, dir)) {
+                    const targetCellX = this.cellX + DIR_VECTORS[dir].x;
+                    const targetCellY = this.cellY + DIR_VECTORS[dir].y;
+                    
+                    const currentDist = Utils.manhattanDistance(this.cellX, this.cellY, playerCellX, playerCellY);
+                    const newDist = Utils.manhattanDistance(targetCellX, targetCellY, playerCellX, playerCellY);
+                    
+                    if (newDist < currentDist) {
+                        const targetX = targetCellX * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_X;
+                        const targetY = targetCellY * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_Y;
+                        
+                        const dx = targetX - this.x;
+                        const dy = targetY - this.y;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        
+                        if (dist > 1) {
+                            const speed = CONFIG.TELEPORT_SPEED;
+                            this.x += (dx / dist) * speed;
+                            this.y += (dy / dist) * speed;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        render(ctx) {
+            if (this.isWarning) {
+                ctx.save();
+                const pulse = Math.sin(Date.now() / 100) * 0.5 + 0.5;
+                ctx.globalAlpha = pulse;
+                ctx.shadowBlur = 30;
+                ctx.shadowColor = CONFIG.COLORS.ENEMY_GLOW;
+                ctx.fillStyle = CONFIG.COLORS.ENEMY;
+                
+                ctx.beginPath();
+                ctx.arc(this.targetX, this.targetY, this.radius * 1.5, 0, Math.PI * 2);
+                ctx.fill();
+                
+                ctx.strokeStyle = CONFIG.COLORS.ENEMY;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(this.targetX, this.targetY, this.radius * 2 + pulse * 20, 0, Math.PI * 2);
+                ctx.stroke();
+                
+                ctx.restore();
+            }
+
+            super.render(ctx);
+        }
+    }
+
+    // =========================================================================
+    // 能量核心类
+    // =========================================================================
+    class EnergyCore {
+        constructor(x, y) {
+            this.x = x;
+            this.y = y;
+            this.radius = CONFIG.CORE_RADIUS;
+            this.collected = false;
+            this.baseY = y;
+            this.angle = 0;
+            this.pulsePhase = Utils.randomFloat(0, Math.PI * 2);
+        }
+
+        update(deltaTime) {
+            this.angle += deltaTime * 0.003;
+        }
+
+        checkCollection(player) {
+            if (this.collected) return false;
+            
+            const dist = Utils.distance(this.x, this.y, player.x, player.y);
+            if (dist < this.radius + player.radius) {
+                this.collected = true;
+                return true;
+            }
+            return false;
+        }
+
+        render(ctx) {
+            if (this.collected) return;
+
+            const float = Math.sin(this.angle) * 5;
+            const pulse = Math.sin(Date.now() / 200 + this.pulsePhase) * 0.3 + 0.7;
+
+            ctx.save();
+            ctx.translate(this.x, this.y + float);
+            ctx.rotate(this.angle);
+
+            ctx.shadowBlur = CONFIG.GLOW_INTENSITY * pulse;
+            ctx.shadowColor = CONFIG.COLORS.CORE_GLOW;
+            ctx.fillStyle = CONFIG.COLORS.CORE;
+
+            ctx.beginPath();
+            for (let i = 0; i < 6; i++) {
+                const angle = (i / 6) * Math.PI * 2;
+                const r = i % 2 === 0 ? this.radius * pulse : this.radius * 0.5 * pulse;
+                const px = Math.cos(angle) * r;
+                const py = Math.sin(angle) * r;
+                if (i === 0) ctx.moveTo(px, py);
+                else ctx.lineTo(px, py);
+            }
+            ctx.closePath();
+            ctx.fill();
+
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.arc(0, 0, this.radius * 0.3, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.restore();
+        }
+    }
+
+    // =========================================================================
+    // 音效系统 - 使用Web Audio API合成音效
+    // =========================================================================
+    class AudioSystem {
+        constructor() {
+            this.audioContext = null;
+            this.enabled = true;
+            this.soundCooldown = {};
+        }
+
+        _init() {
+            if (this.audioContext) return;
+            
+            try {
+                this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            } catch (e) {
+                console.log('Web Audio API not supported');
+                this.enabled = false;
+            }
+        }
+
+        _canPlaySound(name, cooldown = 50) {
+            const now = Date.now();
+            if (this.soundCooldown[name] && now - this.soundCooldown[name] < cooldown) {
+                return false;
+            }
+            this.soundCooldown[name] = now;
+            return true;
+        }
+
+        _playTone(frequency, duration, type = 'sine', volume = 0.1) {
+            if (!this.enabled) return;
+            this._init();
+            if (!this.audioContext) return;
+
+            if (this.audioContext.state === 'suspended') {
+                this.audioContext.resume();
+            }
+
+            const oscillator = this.audioContext.createOscillator();
+            const gainNode = this.audioContext.createGain();
+
+            oscillator.connect(gainNode);
+            gainNode.connect(this.audioContext.destination);
+
+            oscillator.type = type;
+            oscillator.frequency.setValueAtTime(frequency, this.audioContext.currentTime);
+
+            gainNode.gain.setValueAtTime(volume, this.audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + duration);
+
+            oscillator.start(this.audioContext.currentTime);
+            oscillator.stop(this.audioContext.currentTime + duration);
+        }
+
+        playMove() {
+            if (!this._canPlaySound('move', 80)) return;
+            this._playTone(200, 0.05, 'square', 0.03);
+        }
+
+        playCollect() {
+            if (!this._canPlaySound('collect', 100)) return;
+            this._playTone(523, 0.1, 'sine', 0.1);
+            setTimeout(() => this._playTone(659, 0.1, 'sine', 0.1), 50);
+            setTimeout(() => this._playTone(784, 0.15, 'sine', 0.1), 100);
+        }
+
+        playHurt() {
+            if (!this._canPlaySound('hurt', 200)) return;
+            this._playTone(150, 0.3, 'sawtooth', 0.15);
+            setTimeout(() => this._playTone(100, 0.2, 'sawtooth', 0.1), 50);
+        }
+
+        playLevelUp() {
+            if (!this._canPlaySound('levelup', 300)) return;
+            const notes = [523, 659, 784, 1047];
+            notes.forEach((note, i) => {
+                setTimeout(() => this._playTone(note, 0.2, 'sine', 0.1), i * 100);
+            });
+        }
+
+        playGameOver() {
+            if (!this._canPlaySound('gameover', 500)) return;
+            const notes = [392, 349, 330, 262];
+            notes.forEach((note, i) => {
+                setTimeout(() => this._playTone(note, 0.3, 'triangle', 0.1), i * 150);
+            });
+        }
+
+        playBoost() {
+            if (!this._canPlaySound('boost', 100)) return;
+            this._playTone(440, 0.1, 'sawtooth', 0.05);
+        }
+    }
+
+    // =========================================================================
+    // 屏幕震动效果
+    // =========================================================================
+    class ScreenShake {
+        constructor() {
+            this.active = false;
+            this.startTime = 0;
+            this.duration = 0;
+            this.intensity = 0;
+            this.offsetX = 0;
+            this.offsetY = 0;
+        }
+
+        trigger(duration = CONFIG.SHAKE_DURATION, intensity = CONFIG.SHAKE_INTENSITY) {
+            this.active = true;
+            this.startTime = Date.now();
+            this.duration = duration;
+            this.intensity = intensity;
+        }
+
+        update() {
+            if (!this.active) {
+                this.offsetX = 0;
+                this.offsetY = 0;
+                return;
+            }
+
+            const elapsed = Date.now() - this.startTime;
+            const progress = elapsed / this.duration;
+
+            if (progress >= 1) {
+                this.active = false;
+                this.offsetX = 0;
+                this.offsetY = 0;
+                return;
+            }
+
+            const decay = 1 - Utils.easeOutQuad(progress);
+            this.offsetX = Utils.randomFloat(-1, 1) * this.intensity * decay;
+            this.offsetY = Utils.randomFloat(-1, 1) * this.intensity * decay;
+        }
+
+        apply(ctx) {
+            ctx.translate(this.offsetX, this.offsetY);
+        }
+    }
+
+    // =========================================================================
+    // 游戏主控制器
+    // =========================================================================
+    class Game {
+        constructor(canvas) {
+            this.canvas = canvas;
+            this.ctx = canvas.getContext('2d');
+            
+            this.state = GameState.MENU;
+            this.level = 1;
+            this.score = 0;
+            this.highScore = this._loadHighScore();
+            this.highestLevel = this._loadHighestLevel();
+
+            this.keys = {};
+            this.lastTime = 0;
+            this.accumulator = 0;
+            this.fixedTimeStep = 1000 / 60;
+
+            this.maze = null;
+            this.player = null;
+            this.enemies = [];
+            this.cores = [];
+            this.particleSystem = new ParticleSystem();
+            this.audio = new AudioSystem();
+            this.screenShake = new ScreenShake();
+
+            this.menuTimer = 0;
+            this.blinkTimer = 0;
+
+            this._setupInput();
+            this._resizeCanvas();
+            window.addEventListener('resize', () => this._resizeCanvas());
+        }
+
+        _loadHighScore() {
+            try {
+                return parseInt(localStorage.getItem('neonMaze_highScore') || '0');
+            } catch {
+                return 0;
+            }
+        }
+
+        _loadHighestLevel() {
+            try {
+                return parseInt(localStorage.getItem('neonMaze_highestLevel') || '1');
+            } catch {
+                return 1;
+            }
+        }
+
+        _saveHighScore() {
+            try {
+                localStorage.setItem('neonMaze_highScore', this.highScore.toString());
+                localStorage.setItem('neonMaze_highestLevel', this.highestLevel.toString());
+            } catch {}
+        }
+
+        _setupInput() {
+            window.addEventListener('keydown', (e) => {
+                this.keys[e.code] = true;
+
+                if (e.code === 'Enter') {
+                    if (this.state === GameState.MENU) {
+                        this.start();
+                    } else if (this.state === GameState.GAMEOVER) {
+                        this.state = GameState.MENU;
+                    }
+                }
+
+                if (e.code === 'Escape') {
+                    if (this.state === GameState.PLAYING) {
+                        this.state = GameState.PAUSED;
+                    } else if (this.state === GameState.PAUSED) {
+                        this.state = GameState.PLAYING;
+                    }
+                }
+
+                if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
+                    e.preventDefault();
+                }
+            });
+
+            window.addEventListener('keyup', (e) => {
+                this.keys[e.code] = false;
+            });
+        }
+
+        _resizeCanvas() {
+            const container = document.getElementById('gameContainer');
+            const ratio = CONFIG.LOGICAL_WIDTH / CONFIG.LOGICAL_HEIGHT;
+            
+            let width = window.innerWidth;
+            let height = window.innerHeight;
+            
+            if (width / height > ratio) {
+                width = height * ratio;
+            } else {
+                height = width / ratio;
+            }
+            
+            const scale = Math.min(width / CONFIG.LOGICAL_WIDTH, height / CONFIG.LOGICAL_HEIGHT);
+            container.style.transform = `scale(${scale})`;
+        }
+
+        start() {
+            this.level = 1;
+            this.score = 0;
+            this.state = GameState.PLAYING;
+            this._initLevel();
+        }
+
+        _initLevel() {
+            this.maze = new Maze(CONFIG.MAZE_WIDTH, CONFIG.MAZE_HEIGHT);
+            this.maze.generate();
+
+            CONFIG.MAZE_OFFSET_X = this.maze.offsetX;
+            CONFIG.MAZE_OFFSET_Y = this.maze.offsetY;
+
+            const startX = this.maze.offsetX + this.maze.startCell.x * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2;
+            const startY = this.maze.offsetY + this.maze.startCell.y * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2;
+            this.player = new Player(startX, startY);
+
+            this._spawnEnemies();
+            this._spawnCores();
+
+            this.particleSystem.clear();
+        }
+
+        _spawnEnemies() {
+            this.enemies = [];
+            
+            const enemyCount = Math.min(2 + Math.floor(this.level / 3), 5);
+            const avoidCells = [this.maze.startCell, this.maze.endCell];
+            
+            for (let i = 0; i < enemyCount; i++) {
+                const pos = this.maze.getRandomEmptyPosition(avoidCells);
+                if (!pos) continue;
+                
+                let enemy;
+                const rand = Math.random();
+                
+                if (this.level >= 5 && rand < 0.2) {
+                    enemy = new TeleportEnemy(pos.x, pos.y);
+                    enemy.teleportInterval = Math.max(3000, CONFIG.TELEPORT_INTERVAL - this.level * 200);
+                } else if (rand < 0.5) {
+                    enemy = new PatrolEnemy(pos.x, pos.y);
+                    const patrolPath = this._generatePatrolPath(pos.cellX, pos.cellY);
+                    enemy.setPatrolPath(patrolPath);
+                } else {
+                    enemy = new ChaseEnemy(pos.x, pos.y);
+                }
+                
+                this.enemies.push(enemy);
+                avoidCells.push({ x: pos.cellX, y: pos.cellY });
+            }
+        }
+
+        _generatePatrolPath(startX, startY) {
+            const path = [];
+            const length = Utils.randomInt(3, 6);
+            let current = this.maze.getCell(startX, startY);
+            const visited = new Set();
+            
+            for (let i = 0; i < length && current; i++) {
+                path.push({ x: current.x, y: current.y });
+                visited.add(`${current.x},${current.y}`);
+                
+                const neighbors = [];
+                for (let dir = 0; dir < 4; dir++) {
+                    if (!current.walls[dir]) {
+                        const nx = current.x + DIR_VECTORS[dir].x;
+                        const ny = current.y + DIR_VECTORS[dir].y;
+                        const key = `${nx},${ny}`;
+                        if (!visited.has(key)) {
+                            const next = this.maze.getCell(nx, ny);
+                            if (next) neighbors.push(next);
+                        }
+                    }
+                }
+                
+                if (neighbors.length > 0) {
+                    current = Utils.randomChoice(neighbors);
+                } else {
+                    break;
+                }
+            }
+            
+            return path;
+        }
+
+        _spawnCores() {
+            this.cores = [];
+            
+            const count = Utils.randomInt(CONFIG.CORE_COUNT_MIN, CONFIG.CORE_COUNT_MAX);
+            const avoidCells = [this.maze.startCell, this.maze.endCell];
+            
+            for (let i = 0; i < count; i++) {
+                const pos = this.maze.getRandomEmptyPosition(avoidCells);
+                if (!pos) continue;
+                
+                this.cores.push(new EnergyCore(pos.x, pos.y));
+                avoidCells.push({ x: pos.cellX, y: pos.cellY });
+            }
+        }
+
+        nextLevel() {
+            this.level++;
+            this.score += 500 * this.level;
+            this.audio.playLevelUp();
+            this._initLevel();
+            
+            if (this.level > this.highestLevel) {
+                this.highestLevel = this.level;
+                this._saveHighScore();
+            }
+        }
+
+        gameOver() {
+            this.state = GameState.GAMEOVER;
+            this.audio.playGameOver();
+            
+            if (this.score > this.highScore) {
+                this.highScore = this.score;
+                this._saveHighScore();
+            }
+            
+            this.particleSystem.emit(
+                this.player.x,
+                this.player.y,
+                CONFIG.COLORS.PLAYER,
+                50,
+                5,
+                1000,
+                6
+            );
+        }
+
+        update(deltaTime) {
+            if (this.state !== GameState.PLAYING) {
+                this.menuTimer += deltaTime;
+                this.blinkTimer += deltaTime;
+                this.particleSystem.update(deltaTime);
+                this.screenShake.update();
+                return;
+            }
+
+            const shouldEmitTrail = this.player.update(this.keys, this.maze, deltaTime, this.audio);
+            
+            if (shouldEmitTrail) {
+                this.particleSystem.emitTrail(this.player.x, this.player.y, CONFIG.COLORS.PLAYER);
+                if (this.player.isBoosting) {
+                    this.audio.playBoost();
+                }
+            }
+
+            if (this.player.energy <= 0) {
+                this.gameOver();
+                return;
+            }
+
+            for (const enemy of this.enemies) {
+                enemy.update(this.player, this.maze, deltaTime);
+                
+                if (enemy.checkCollision(this.player)) {
+                    if (this.player.takeDamage()) {
+                        this.screenShake.trigger();
+                        this.audio.playHurt();
+                        this.player.energy = Math.max(0, this.player.energy - 30);
+                        this.particleSystem.emit(
+                            this.player.x,
+                            this.player.y,
+                            CONFIG.COLORS.ENEMY,
+                            20,
+                            4,
+                            500,
+                            4
+                        );
+                        
+                        if (this.player.energy <= 0) {
+                            this.gameOver();
+                            return;
+                        }
+                    }
+                }
+            }
+
+            for (const core of this.cores) {
+                core.update(deltaTime);
+                
+                if (core.checkCollection(this.player)) {
+                    this.score += CONFIG.CORE_SCORE_VALUE;
+                    this.player.addEnergy(CONFIG.CORE_ENERGY_VALUE);
+                    this.audio.playCollect();
+                    this.particleSystem.emit(
+                        core.x,
+                        core.y,
+                        CONFIG.COLORS.CORE,
+                        30,
+                        4,
+                        800,
+                        5
+                    );
+                    
+                    if (this.score > this.highScore) {
+                        this.highScore = this.score;
+                        this._saveHighScore();
+                    }
+                }
+            }
+
+            this.cores = this.cores.filter(c => !c.collected);
+
+            const endX = this.maze.offsetX + this.maze.endCell.x * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2;
+            const endY = this.maze.offsetY + this.maze.endCell.y * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2;
+            const distToExit = Utils.distance(this.player.x, this.player.y, endX, endY);
+            
+            if (distToExit < CONFIG.CELL_SIZE / 2) {
+                this.nextLevel();
+                return;
+            }
+
+            this.particleSystem.update(deltaTime);
+            this.screenShake.update();
+        }
+
+        render() {
+            const ctx = this.ctx;
+
+            ctx.fillStyle = CONFIG.COLORS.BACKGROUND;
+            ctx.fillRect(0, 0, CONFIG.LOGICAL_WIDTH, CONFIG.LOGICAL_HEIGHT);
+
+            ctx.save();
+            this.screenShake.apply(ctx);
+
+            if (this.state === GameState.PLAYING || 
+                this.state === GameState.PAUSED || 
+                this.state === GameState.GAMEOVER) {
+                
+                if (this.maze) {
+                    this.maze.render(ctx);
+                }
+
+                for (const core of this.cores) {
+                    core.render(ctx);
+                }
+
+                for (const enemy of this.enemies) {
+                    enemy.render(ctx);
+                }
+
+                this.particleSystem.render(ctx);
+
+                if (this.player && this.state !== GameState.GAMEOVER) {
+                    this.player.render(ctx);
+                }
+
+                if (this.state === GameState.PLAYING || this.state === GameState.PAUSED) {
+                    this._renderFog(ctx);
+                }
+
+                if (this.state !== GameState.GAMEOVER) {
+                    this._renderHUD(ctx);
+                }
+            }
+
+            ctx.restore();
+
+            if (this.state === GameState.MENU) {
+                this._renderMenu(ctx);
+            } else if (this.state === GameState.PAUSED) {
+                this._renderPause(ctx);
+            } else if (this.state === GameState.GAMEOVER) {
+                this._renderGameOver(ctx);
+            }
+        }
+
+        _renderFog(ctx) {
+            if (!this.player) return;
+
+            ctx.save();
+            
+            const gradient = ctx.createRadialGradient(
+                this.player.x, this.player.y, 0,
+                this.player.x, this.player.y, CONFIG.FOG_RADIUS
+            );
+            gradient.addColorStop(0, 'rgba(10, 10, 26, 0)');
+            gradient.addColorStop(0.7, 'rgba(10, 10, 26, 0.5)');
+            gradient.addColorStop(1, 'rgba(10, 10, 26, 0.92)');
+
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, CONFIG.LOGICAL_WIDTH, CONFIG.LOGICAL_HEIGHT);
+            
+            ctx.restore();
+        }
+
+        _renderHUD(ctx) {
+            ctx.save();
+            
+            ctx.fillStyle = CONFIG.COLORS.HUD_BG;
+            ctx.fillRect(0, 0, CONFIG.LOGICAL_WIDTH, 45);
+
+            ctx.shadowBlur = 10;
+            
+            ctx.shadowColor = CONFIG.COLORS.WALL_GLOW;
+            ctx.fillStyle = CONFIG.COLORS.WALL;
+            ctx.font = 'bold 18px Consolas';
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(`第 ${this.level} 层`, 20, 22);
+
+            ctx.shadowColor = CONFIG.COLORS.CORE_GLOW;
+            ctx.fillStyle = CONFIG.COLORS.CORE;
+            ctx.textAlign = 'center';
+            ctx.fillText(`分数: ${this.score}`, CONFIG.LOGICAL_WIDTH / 2, 22);
+
+            const energyBarX = CONFIG.LOGICAL_WIDTH - 180;
+            const energyBarY = 10;
+            const energyBarWidth = 150;
+            const energyBarHeight = 24;
+            
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = CONFIG.COLORS.PLAYER_GLOW;
+            ctx.strokeStyle = CONFIG.COLORS.PLAYER;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(energyBarX, energyBarY, energyBarWidth, energyBarHeight);
+
+            const energyPercent = this.player.energy / CONFIG.MAX_ENERGY;
+            const fillWidth = energyBarWidth * energyPercent;
+            
+            const energyGradient = ctx.createLinearGradient(
+                energyBarX, energyBarY,
+                energyBarX + energyBarWidth, energyBarY
+            );
+            energyGradient.addColorStop(0, CONFIG.COLORS.PLAYER);
+            energyGradient.addColorStop(1, CONFIG.COLORS.PLAYER_GLOW);
+            
+            ctx.fillStyle = energyGradient;
+            ctx.fillRect(energyBarX + 2, energyBarY + 2, fillWidth - 4, energyBarHeight - 4);
+
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = CONFIG.COLORS.TEXT;
+            ctx.font = 'bold 12px Consolas';
+            ctx.textAlign = 'center';
+            ctx.fillText(
+                `${Math.floor(this.player.energy)}/${CONFIG.MAX_ENERGY}`,
+                energyBarX + energyBarWidth / 2,
+                energyBarY + energyBarHeight / 2
+            );
+
+            ctx.restore();
+        }
+
+        _renderMenu(ctx) {
+            ctx.save();
+
+            const pulse = Math.sin(this.menuTimer / 500) * 0.2 + 0.8;
+            
+            ctx.shadowBlur = 30 * pulse;
+            ctx.shadowColor = CONFIG.COLORS.PLAYER_GLOW;
+            ctx.fillStyle = CONFIG.COLORS.PLAYER;
+            ctx.font = 'bold 56px Consolas';
+            ctx.textAlign = 'center';
+            ctx.fillText('霓虹迷宫大逃亡', CONFIG.LOGICAL_WIDTH / 2, 180);
+
+            ctx.shadowBlur = 20;
+            ctx.shadowColor = CONFIG.COLORS.WALL_GLOW;
+            ctx.fillStyle = CONFIG.COLORS.WALL;
+            ctx.font = 'bold 24px Consolas';
+            ctx.fillText('NEON MAZE ESCAPE', CONFIG.LOGICAL_WIDTH / 2, 230);
+
+            const blink = Math.sin(this.blinkTimer / 300) > 0;
+            if (blink) {
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = CONFIG.COLORS.CORE_GLOW;
+                ctx.fillStyle = CONFIG.COLORS.CORE;
+                ctx.font = 'bold 20px Consolas';
+                ctx.fillText('按 Enter 开始游戏', CONFIG.LOGICAL_WIDTH / 2, 320);
+            }
+
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = CONFIG.COLORS.ENEMY_GLOW;
+            ctx.fillStyle = CONFIG.COLORS.ENEMY;
+            ctx.font = '16px Consolas';
+            ctx.fillText('━ 操作说明 ━', CONFIG.LOGICAL_WIDTH / 2, 390);
+
+            ctx.shadowBlur = 5;
+            ctx.fillStyle = CONFIG.COLORS.TEXT;
+            ctx.font = '14px Consolas';
+            const instructions = [
+                'WASD / 方向键 - 移动',
+                '空格键 - 加速冲刺（消耗能量）',
+                'ESC - 暂停游戏',
+                '',
+                '收集能量核心恢复能量，找到出口进入下一层！'
+            ];
+            
+            instructions.forEach((text, i) => {
+                ctx.fillText(text, CONFIG.LOGICAL_WIDTH / 2, 425 + i * 25);
+            });
+
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = CONFIG.COLORS.CORE_GLOW;
+            ctx.fillStyle = CONFIG.COLORS.CORE;
+            ctx.font = '14px Consolas';
+            ctx.fillText(`最高记录: ${this.highScore} 分 | 最高层数: ${this.highestLevel}`, CONFIG.LOGICAL_WIDTH / 2, 550);
+
+            ctx.restore();
+        }
+
+        _renderPause(ctx) {
+            ctx.save();
+
+            ctx.fillStyle = 'rgba(10, 10, 26, 0.7)';
+            ctx.fillRect(0, 0, CONFIG.LOGICAL_WIDTH, CONFIG.LOGICAL_HEIGHT);
+
+            const pulse = Math.sin(this.menuTimer / 300) * 0.2 + 0.8;
+            ctx.shadowBlur = 30 * pulse;
+            ctx.shadowColor = CONFIG.COLORS.WALL_GLOW;
+            ctx.fillStyle = CONFIG.COLORS.WALL;
+            ctx.font = 'bold 48px Consolas';
+            ctx.textAlign = 'center';
+            ctx.fillText('游戏暂停', CONFIG.LOGICAL_WIDTH / 2, 280);
+
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = CONFIG.COLORS.CORE_GLOW;
+            ctx.fillStyle = CONFIG.COLORS.CORE;
+            ctx.font = 'bold 18px Consolas';
+            ctx.fillText('按 ESC 继续游戏', CONFIG.LOGICAL_WIDTH / 2, 340);
+
+            ctx.restore();
+        }
+
+        _renderGameOver(ctx) {
+            ctx.save();
+
+            ctx.fillStyle = 'rgba(10, 10, 26, 0.8)';
+            ctx.fillRect(0, 0, CONFIG.LOGICAL_WIDTH, CONFIG.LOGICAL_HEIGHT);
+
+            const shake = Math.sin(this.menuTimer / 50) * 2;
+            const pulse = Math.sin(this.menuTimer / 400) * 0.1 + 0.9;
+
+            ctx.shadowBlur = 40 * pulse;
+            ctx.shadowColor = CONFIG.COLORS.ENEMY_GLOW;
+            ctx.fillStyle = CONFIG.COLORS.ENEMY;
+            ctx.font = 'bold 64px Consolas';
+            ctx.textAlign = 'center';
+            ctx.fillText('GAME OVER', CONFIG.LOGICAL_WIDTH / 2 + shake, 180);
+
+            ctx.shadowBlur = 20;
+            ctx.shadowColor = CONFIG.COLORS.WALL_GLOW;
+            ctx.fillStyle = CONFIG.COLORS.WALL;
+            ctx.font = 'bold 24px Consolas';
+            ctx.fillText('━ 本局数据 ━', CONFIG.LOGICAL_WIDTH / 2, 260);
+
+            ctx.shadowBlur = 10;
+            ctx.fillStyle = CONFIG.COLORS.TEXT;
+            ctx.font = '20px Consolas';
+            ctx.fillText(`到达层数: 第 ${this.level} 层`, CONFIG.LOGICAL_WIDTH / 2, 310);
+            ctx.fillText(`本局得分: ${this.score} 分`, CONFIG.LOGICAL_WIDTH / 2, 345);
+
+            const isNewHighScore = this.score >= this.highScore && this.score > 0;
+            if (isNewHighScore) {
+                const newRecordPulse = Math.sin(this.menuTimer / 200) * 0.3 + 0.7;
+                ctx.shadowBlur = 20 * newRecordPulse;
+                ctx.shadowColor = CONFIG.COLORS.CORE_GLOW;
+                ctx.fillStyle = CONFIG.COLORS.CORE;
+                ctx.font = 'bold 22px Consolas';
+                ctx.fillText('★ 新纪录！★', CONFIG.LOGICAL_WIDTH / 2, 395);
+            }
+
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = CONFIG.COLORS.PLAYER_GLOW;
+            ctx.fillStyle = CONFIG.COLORS.PLAYER;
+            ctx.font = '18px Consolas';
+            ctx.fillText(`最高记录: ${this.highScore} 分 | 最高层数: ${this.highestLevel}`, CONFIG.LOGICAL_WIDTH / 2, 440);
+
+            const blink = Math.sin(this.blinkTimer / 300) > 0;
+            if (blink) {
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = CONFIG.COLORS.CORE_GLOW;
+                ctx.fillStyle = CONFIG.COLORS.CORE;
+                ctx.font = 'bold 18px Consolas';
+                ctx.fillText('按 Enter 返回主菜单', CONFIG.LOGICAL_WIDTH / 2, 520);
+            }
+
+            ctx.restore();
+        }
+
+        gameLoop(timestamp) {
+            if (!this.lastTime) this.lastTime = timestamp;
+            const deltaTime = timestamp - this.lastTime;
+            this.lastTime = timestamp;
+
+            this.accumulator += Math.min(deltaTime, 100);
+
+            while (this.accumulator >= this.fixedTimeStep) {
+                this.update(this.fixedTimeStep);
+                this.accumulator -= this.fixedTimeStep;
+            }
+
+            this.render();
+
+            requestAnimationFrame((t) => this.gameLoop(t));
+        }
+
+        startLoop() {
+            requestAnimationFrame((t) => this.gameLoop(t));
+        }
+    }
+
+    // =========================================================================
+    // 初始化游戏
+    // =========================================================================
+    window.addEventListener('load', () => {
+        const canvas = document.getElementById('gameCanvas');
+        window.game = new Game(canvas);
+        window.game.startLoop();
+    });
+    </script>
+</body>
+</html>
