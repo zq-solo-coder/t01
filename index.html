@@ -383,136 +383,343 @@
             return cell && !cell.walls[direction];
         }
 
-        // 检查像素位置的移动碰撞 - 改进版：8点检测+安全边距
-        checkCollision(x, y, radius, dx, dy) {
-            const result = { x: true, y: true };
-            const safetyMargin = 2;
-            const checkRadius = radius + safetyMargin;
+        // 圆形角色移动碰撞检测 - 丝滑贴墙滑行版
+        // 算法：使用圆形与线段的精确碰撞检测，结合子步长移动和碰撞响应
+        moveCircle(x, y, radius, dx, dy) {
+            const result = { x: x + dx, y: y + dy, collided: false };
+            const totalDist = Math.sqrt(dx * dx + dy * dy);
             
-            const newX = x + dx;
-            const newY = y + dy;
+            if (totalDist < 0.01) {
+                return this.resolvePosition(result.x, result.y, radius);
+            }
             
-            const checkPointsX = [
-                { x: newX - checkRadius, y: y },
-                { x: newX + checkRadius, y: y },
-                { x: newX - checkRadius * 0.7, y: y - checkRadius * 0.7 },
-                { x: newX + checkRadius * 0.7, y: y - checkRadius * 0.7 },
-                { x: newX - checkRadius * 0.7, y: y + checkRadius * 0.7 },
-                { x: newX + checkRadius * 0.7, y: y + checkRadius * 0.7 }
-            ];
+            const subSteps = Math.max(1, Math.ceil(totalDist / (radius * 0.5)));
+            const stepDx = dx / subSteps;
+            const stepDy = dy / subSteps;
             
-            result.x = !checkPointsX.some(c => this._isPointInWall(c.x, c.y));
+            let currentX = x;
+            let currentY = y;
             
-            const checkPointsY = [
-                { x: x, y: newY - checkRadius },
-                { x: x, y: newY + checkRadius },
-                { x: x - checkRadius * 0.7, y: newY - checkRadius * 0.7 },
-                { x: x + checkRadius * 0.7, y: newY - checkRadius * 0.7 },
-                { x: x - checkRadius * 0.7, y: newY + checkRadius * 0.7 },
-                { x: x + checkRadius * 0.7, y: newY + checkRadius * 0.7 }
-            ];
+            for (let i = 0; i < subSteps; i++) {
+                const nextX = currentX + stepDx;
+                const nextY = currentY + stepDy;
+                
+                const collision = this._checkCircleCollision(nextX, nextY, radius);
+                
+                if (!collision.collided) {
+                    currentX = nextX;
+                    currentY = nextY;
+                } else {
+                    result.collided = true;
+                    
+                    const slideResult = this._slideAlongWall(
+                        currentX, currentY, 
+                        stepDx, stepDy, 
+                        radius, collision
+                    );
+                    
+                    currentX = slideResult.x;
+                    currentY = slideResult.y;
+                }
+            }
             
-            result.y = !checkPointsY.some(c => this._isPointInWall(c.x, c.y));
+            const finalPos = this.resolvePosition(currentX, currentY, radius);
+            result.x = finalPos.x;
+            result.y = finalPos.y;
             
             return result;
         }
 
-        // 检查当前位置是否已经在墙内（用于修正卡住的情况）
-        isInWall(x, y, radius) {
-            const checkRadius = radius;
-            const checkPoints = [
-                { x: x, y: y },
-                { x: x - checkRadius, y: y },
-                { x: x + checkRadius, y: y },
-                { x: x, y: y - checkRadius },
-                { x: x, y: y + checkRadius },
-                { x: x - checkRadius * 0.5, y: y - checkRadius * 0.5 },
-                { x: x + checkRadius * 0.5, y: y - checkRadius * 0.5 },
-                { x: x - checkRadius * 0.5, y: y + checkRadius * 0.5 },
-                { x: x + checkRadius * 0.5, y: y + checkRadius * 0.5 }
-            ];
+        // 检测圆形与墙壁的碰撞 - 精确计算最近点和穿透深度（支持墙角多墙碰撞）
+        _checkCircleCollision(cx, cy, radius) {
+            const result = {
+                collided: false,
+                nearestX: 0,
+                nearestY: 0,
+                penetrationX: 0,
+                penetrationY: 0,
+                penetrationDepth: 0
+            };
             
-            return checkPoints.some(p => this._isPointInWall(p.x, p.y));
-        }
-
-        // 将位置从墙内推出
-        pushOutOfWall(x, y, radius) {
-            const pushSteps = 8;
-            const pushDist = 2;
+            const localX = cx - this.offsetX;
+            const localY = cy - this.offsetY;
             
-            for (let i = 0; i < pushSteps; i++) {
-                if (!this.isInWall(x, y, radius)) {
-                    break;
-                }
+            if (localX < radius || localX >= this.width * CONFIG.CELL_SIZE - radius ||
+                localY < radius || localY >= this.height * CONFIG.CELL_SIZE - radius) {
+                result.collided = true;
                 
-                const directions = [
-                    { dx: pushDist, dy: 0 },
-                    { dx: -pushDist, dy: 0 },
-                    { dx: 0, dy: pushDist },
-                    { dx: 0, dy: -pushDist },
-                    { dx: pushDist * 0.7, dy: pushDist * 0.7 },
-                    { dx: -pushDist * 0.7, dy: pushDist * 0.7 },
-                    { dx: pushDist * 0.7, dy: -pushDist * 0.7 },
-                    { dx: -pushDist * 0.7, dy: -pushDist * 0.7 }
-                ];
+                const clampedX = Utils.clamp(localX, radius, this.width * CONFIG.CELL_SIZE - radius);
+                const clampedY = Utils.clamp(localY, radius, this.height * CONFIG.CELL_SIZE - radius);
                 
-                let bestX = x;
-                let bestY = y;
-                let bestPenalty = Infinity;
+                result.nearestX = clampedX + this.offsetX;
+                result.nearestY = clampedY + this.offsetY;
                 
-                for (const dir of directions) {
-                    const testX = x + dir.dx;
-                    const testY = y + dir.dy;
-                    
-                    if (!this.isInWall(testX, testY, radius)) {
-                        const moveDist = Math.abs(dir.dx) + Math.abs(dir.dy);
-                        if (moveDist < bestPenalty) {
-                            bestPenalty = moveDist;
-                            bestX = testX;
-                            bestY = testY;
-                        }
-                    }
-                }
+                const dx = cx - result.nearestX;
+                const dy = cy - result.nearestY;
+                const dist = Math.sqrt(dx * dx + dy * dy);
                 
-                if (bestPenalty < Infinity) {
-                    x = bestX;
-                    y = bestY;
+                if (dist > 0.001) {
+                    result.penetrationX = dx / dist;
+                    result.penetrationY = dy / dist;
+                    result.penetrationDepth = radius - dist;
                 } else {
-                    const randomDir = directions[Math.floor(Math.random() * directions.length)];
-                    x += randomDir.dx;
-                    y += randomDir.dy;
+                    result.penetrationX = 0;
+                    result.penetrationY = -1;
+                    result.penetrationDepth = radius;
                 }
-            }
-            
-            return { x, y };
-        }
-
-        // 检查点是否在墙内 - 改进版：增加碰撞厚度
-        _isPointInWall(px, py) {
-            const localX = px - this.offsetX;
-            const localY = py - this.offsetY;
-            
-            if (localX < 0 || localX >= this.width * CONFIG.CELL_SIZE ||
-                localY < 0 || localY >= this.height * CONFIG.CELL_SIZE) {
-                return true;
+                
+                return result;
             }
             
             const cellX = Math.floor(localX / CONFIG.CELL_SIZE);
             const cellY = Math.floor(localY / CONFIG.CELL_SIZE);
             const cell = this.getCell(cellX, cellY);
             
-            if (!cell) return true;
+            if (!cell) {
+                result.collided = true;
+                return result;
+            }
             
-            const innerX = localX - cellX * CONFIG.CELL_SIZE;
-            const innerY = localY - cellY * CONFIG.CELL_SIZE;
-            const thickness = CONFIG.WALL_THICKNESS + 2;
+            const cellPx = this.offsetX + cellX * CONFIG.CELL_SIZE;
+            const cellPy = this.offsetY + cellY * CONFIG.CELL_SIZE;
+            const thickness = CONFIG.WALL_THICKNESS;
             
-            if (cell.walls[Direction.TOP] && innerY < thickness) return true;
-            if (cell.walls[Direction.BOTTOM] && innerY > CONFIG.CELL_SIZE - thickness) return true;
-            if (cell.walls[Direction.LEFT] && innerX < thickness) return true;
-            if (cell.walls[Direction.RIGHT] && innerX > CONFIG.CELL_SIZE - thickness) return true;
+            const collisions = [];
             
-            return false;
+            if (cell.walls[Direction.TOP]) {
+                const wallY = cellPy;
+                const nearestX = Utils.clamp(cx, cellPx, cellPx + CONFIG.CELL_SIZE);
+                const nearestY = wallY;
+                const ddx = cx - nearestX;
+                const ddy = cy - nearestY;
+                const d = Math.sqrt(ddx * ddx + ddy * ddy);
+                
+                if (d < radius) {
+                    collisions.push({
+                        dist: d,
+                        nearestX,
+                        nearestY,
+                        normalX: d > 0.001 ? ddx / d : 0,
+                        normalY: d > 0.001 ? ddy / d : -1
+                    });
+                }
+            }
+            
+            if (cell.walls[Direction.BOTTOM]) {
+                const wallY = cellPy + CONFIG.CELL_SIZE;
+                const nearestX = Utils.clamp(cx, cellPx, cellPx + CONFIG.CELL_SIZE);
+                const nearestY = wallY;
+                const ddx = cx - nearestX;
+                const ddy = cy - nearestY;
+                const d = Math.sqrt(ddx * ddx + ddy * ddy);
+                
+                if (d < radius) {
+                    collisions.push({
+                        dist: d,
+                        nearestX,
+                        nearestY,
+                        normalX: d > 0.001 ? ddx / d : 0,
+                        normalY: d > 0.001 ? ddy / d : 1
+                    });
+                }
+            }
+            
+            if (cell.walls[Direction.LEFT]) {
+                const wallX = cellPx;
+                const nearestX = wallX;
+                const nearestY = Utils.clamp(cy, cellPy, cellPy + CONFIG.CELL_SIZE);
+                const ddx = cx - nearestX;
+                const ddy = cy - nearestY;
+                const d = Math.sqrt(ddx * ddx + ddy * ddy);
+                
+                if (d < radius) {
+                    collisions.push({
+                        dist: d,
+                        nearestX,
+                        nearestY,
+                        normalX: d > 0.001 ? ddx / d : -1,
+                        normalY: d > 0.001 ? ddy / d : 0
+                    });
+                }
+            }
+            
+            if (cell.walls[Direction.RIGHT]) {
+                const wallX = cellPx + CONFIG.CELL_SIZE;
+                const nearestX = wallX;
+                const nearestY = Utils.clamp(cy, cellPy, cellPy + CONFIG.CELL_SIZE);
+                const ddx = cx - nearestX;
+                const ddy = cy - nearestY;
+                const d = Math.sqrt(ddx * ddx + ddy * ddy);
+                
+                if (d < radius) {
+                    collisions.push({
+                        dist: d,
+                        nearestX,
+                        nearestY,
+                        normalX: d > 0.001 ? ddx / d : 1,
+                        normalY: d > 0.001 ? ddy / d : 0
+                    });
+                }
+            }
+            
+            if (collisions.length === 1) {
+                const c = collisions[0];
+                result.collided = true;
+                result.nearestX = c.nearestX;
+                result.nearestY = c.nearestY;
+                result.penetrationX = c.normalX;
+                result.penetrationY = c.normalY;
+                result.penetrationDepth = radius - c.dist;
+            } else if (collisions.length >= 2) {
+                collisions.sort((a, b) => a.dist - b.dist);
+                
+                let avgNormalX = 0;
+                let avgNormalY = 0;
+                let totalWeight = 0;
+                
+                for (const c of collisions) {
+                    const weight = 1 / (c.dist + 0.01);
+                    avgNormalX += c.normalX * weight;
+                    avgNormalY += c.normalY * weight;
+                    totalWeight += weight;
+                }
+                
+                avgNormalX /= totalWeight;
+                avgNormalY /= totalWeight;
+                
+                const len = Math.sqrt(avgNormalX * avgNormalX + avgNormalY * avgNormalY);
+                if (len > 0.001) {
+                    avgNormalX /= len;
+                    avgNormalY /= len;
+                }
+                
+                const minDist = collisions[0].dist;
+                const avgDist = collisions.reduce((sum, c) => sum + c.dist, 0) / collisions.length;
+                
+                result.collided = true;
+                result.nearestX = collisions[0].nearestX;
+                result.nearestY = collisions[0].nearestY;
+                result.penetrationX = avgNormalX;
+                result.penetrationY = avgNormalY;
+                result.penetrationDepth = radius - Math.min(minDist, avgDist * 0.8);
+            }
+            
+            return result;
+        }
+
+        // 沿墙壁滑行 - 分离移动向量，沿墙面滑动
+        _slideAlongWall(x, y, dx, dy, radius, collision) {
+            const nx = collision.penetrationX;
+            const ny = collision.penetrationY;
+            
+            const dotProduct = dx * nx + dy * ny;
+            const slideDx = dx - dotProduct * nx;
+            const slideDy = dy - dotProduct * ny;
+            
+            const slideDist = Math.sqrt(slideDx * slideDx + slideDy * slideDy);
+            if (slideDist < 0.01) {
+                return { x, y };
+            }
+            
+            const nextX = x + slideDx;
+            const nextY = y + slideDy;
+            
+            const newCollision = this._checkCircleCollision(nextX, nextY, radius);
+            
+            if (!newCollision.collided) {
+                return { x: nextX, y: nextY };
+            }
+            
+            const pushedX = nextX + newCollision.penetrationX * newCollision.penetrationDepth * 1.01;
+            const pushedY = nextY + newCollision.penetrationY * newCollision.penetrationDepth * 1.01;
+            
+            const finalCollision = this._checkCircleCollision(pushedX, pushedY, radius);
+            if (!finalCollision.collided) {
+                return { x: pushedX, y: pushedY };
+            }
+            
+            return { x, y };
+        }
+
+        // 修正位置 - 确保圆形完全在合法区域内（强力推出版）
+        resolvePosition(x, y, radius) {
+            let collision = this._checkCircleCollision(x, y, radius);
+            
+            if (!collision.collided) {
+                return { x, y };
+            }
+            
+            const maxPushAttempts = 10;
+            let currentX = x;
+            let currentY = y;
+            
+            for (let attempt = 0; attempt < maxPushAttempts; attempt++) {
+                collision = this._checkCircleCollision(currentX, currentY, radius);
+                
+                if (!collision.collided) {
+                    break;
+                }
+                
+                const pushDist = Math.max(collision.penetrationDepth + 1, 2);
+                const pushX = collision.penetrationX * pushDist;
+                const pushY = collision.penetrationY * pushDist;
+                
+                currentX += pushX;
+                currentY += pushY;
+                
+                const testCollision = this._checkCircleCollision(currentX, currentY, radius);
+                if (!testCollision.collided) {
+                    break;
+                }
+            }
+            
+            collision = this._checkCircleCollision(currentX, currentY, radius);
+            if (!collision.collided) {
+                return { x: currentX, y: currentY };
+            }
+            
+            let bestX = currentX;
+            let bestY = currentY;
+            let minPenetration = Infinity;
+            
+            const searchRange = Math.ceil(radius * 1.5) + 5;
+            const step = 1;
+            
+            for (let sy = -searchRange; sy <= searchRange; sy += step) {
+                for (let sx = -searchRange; sx <= searchRange; sx += step) {
+                    if (sx === 0 && sy === 0) continue;
+                    
+                    const testX = x + sx;
+                    const testY = y + sy;
+                    const testCollision = this._checkCircleCollision(testX, testY, radius);
+                    
+                    if (!testCollision.collided) {
+                        const dist = Math.abs(sx) + Math.abs(sy);
+                        if (dist < minPenetration) {
+                            minPenetration = dist;
+                            bestX = testX;
+                            bestY = testY;
+                        }
+                    }
+                }
+            }
+            
+            if (minPenetration < Infinity) {
+                return { x: bestX, y: bestY };
+            }
+            
+            const cellX = Math.floor((x - this.offsetX) / CONFIG.CELL_SIZE);
+            const cellY = Math.floor((y - this.offsetY) / CONFIG.CELL_SIZE);
+            const centerX = this.offsetX + cellX * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2;
+            const centerY = this.offsetY + cellY * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2;
+            
+            return { x: centerX, y: centerY };
+        }
+
+        // 检查位置是否合法（用于敌人AI）
+        isValidPosition(x, y, radius) {
+            const collision = this._checkCircleCollision(x, y, radius);
+            return !collision.collided;
         }
 
         // 获取随机可放置位置（不在墙上）
@@ -846,18 +1053,13 @@
             const moveX = dx * speed;
             const moveY = dy * speed;
 
-            const collision = maze.checkCollision(this.x, this.y, this.radius, moveX, moveY);
+            const moveResult = maze.moveCircle(this.x, this.y, this.radius, moveX, moveY);
+            const moved = (moveResult.x !== this.x || moveResult.y !== this.y);
+            
+            this.x = moveResult.x;
+            this.y = moveResult.y;
 
-            if (collision.x) this.x += moveX;
-            if (collision.y) this.y += moveY;
-
-            if (maze.isInWall(this.x, this.y, this.radius)) {
-                const newPos = maze.pushOutOfWall(this.x, this.y, this.radius);
-                this.x = newPos.x;
-                this.y = newPos.y;
-            }
-
-            if ((dx !== 0 || dy !== 0) && (collision.x || collision.y)) {
+            if ((dx !== 0 || dy !== 0) && moved) {
                 this.trailTimer += deltaTime;
                 if (this.trailTimer > 30) {
                     this.trailTimer = 0;
@@ -972,13 +1174,34 @@
             ctx.restore();
         }
 
-        enforceWallCollision(maze) {
-            if (maze.isInWall(this.x, this.y, this.radius)) {
-                const newPos = maze.pushOutOfWall(this.x, this.y, this.radius);
-                this.x = newPos.x;
-                this.y = newPos.y;
-                this._updateCellPosition();
+        moveTowards(targetX, targetY, speed, maze) {
+            const dx = targetX - this.x;
+            const dy = targetY - this.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+
+            if (dist < 0.01) {
+                return { reached: true, x: this.x, y: this.y };
             }
+
+            const moveX = (dx / dist) * speed;
+            const moveY = (dy / dist) * speed;
+
+            const result = maze.moveCircle(this.x, this.y, this.radius, moveX, moveY);
+            
+            const oldX = this.x;
+            const oldY = this.y;
+            
+            this.x = result.x;
+            this.y = result.y;
+            this._updateCellPosition();
+
+            const movedDist = Utils.distance(oldX, oldY, this.x, this.y);
+            return { 
+                reached: movedDist >= dist * 0.9, 
+                collided: result.collided,
+                x: this.x, 
+                y: this.y 
+            };
         }
     }
 
@@ -1028,13 +1251,11 @@
                     this._chasePlayer(maze, deltaTime);
                 }
             } else {
-                this._patrol(deltaTime);
+                this._patrol(maze, deltaTime);
             }
-
-            this.enforceWallCollision(maze);
         }
 
-        _patrol(deltaTime) {
+        _patrol(maze, deltaTime) {
             if (this.path.length < 2) return;
 
             this.moveTimer += deltaTime;
@@ -1045,9 +1266,7 @@
             const targetX = target.x * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_X;
             const targetY = target.y * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_Y;
 
-            const dx = targetX - this.x;
-            const dy = targetY - this.y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
+            const dist = Utils.distance(this.x, this.y, targetX, targetY);
 
             if (dist < 5) {
                 this.pathIndex += this.direction;
@@ -1056,9 +1275,7 @@
                     this.pathIndex += this.direction * 2;
                 }
             } else {
-                const speed = CONFIG.PATROL_SPEED;
-                this.x += (dx / dist) * speed;
-                this.y += (dy / dist) * speed;
+                this.moveTowards(targetX, targetY, CONFIG.PATROL_SPEED, maze);
             }
         }
 
@@ -1073,16 +1290,12 @@
             const targetX = target.x * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_X;
             const targetY = target.y * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_Y;
 
-            const dx = targetX - this.x;
-            const dy = targetY - this.y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
+            const dist = Utils.distance(this.x, this.y, targetX, targetY);
 
-            if (dist < 5) {
+            if (dist < 8) {
                 this.chasePath.shift();
             } else {
-                const speed = CONFIG.CHASE_SPEED;
-                this.x += (dx / dist) * speed;
-                this.y += (dy / dist) * speed;
+                this.moveTowards(targetX, targetY, CONFIG.CHASE_SPEED, maze);
             }
         }
     }
@@ -1122,48 +1335,36 @@
                 });
             }
 
-            let moved = false;
+            let targetCellX = this.cellX;
+            let targetCellY = this.cellY;
+            let found = false;
+            
             for (const dir of directions) {
                 if (maze.canMove(this.cellX, this.cellY, dir)) {
-                    const targetX = (this.cellX + DIR_VECTORS[dir].x) * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_X;
-                    const targetY = (this.cellY + DIR_VECTORS[dir].y) * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_Y;
-                    
-                    const dx = targetX - this.x;
-                    const dy = targetY - this.y;
-                    const dist = Math.sqrt(dx * dx + dy * dy);
-                    
-                    if (dist > 1) {
-                        const speed = CONFIG.CHASE_SPEED;
-                        this.x += (dx / dist) * speed;
-                        this.y += (dy / dist) * speed;
-                    }
-                    moved = true;
+                    targetCellX = this.cellX + DIR_VECTORS[dir].x;
+                    targetCellY = this.cellY + DIR_VECTORS[dir].y;
+                    found = true;
                     break;
                 }
             }
 
-            if (!moved) {
+            if (!found) {
                 const allDirs = Utils.shuffle([0, 1, 2, 3]);
                 for (const dir of allDirs) {
                     if (maze.canMove(this.cellX, this.cellY, dir)) {
-                        const targetX = (this.cellX + DIR_VECTORS[dir].x) * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_X;
-                        const targetY = (this.cellY + DIR_VECTORS[dir].y) * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_Y;
-                        
-                        const dx = targetX - this.x;
-                        const dy = targetY - this.y;
-                        const dist = Math.sqrt(dx * dx + dy * dy);
-                        
-                        if (dist > 1) {
-                            const speed = CONFIG.CHASE_SPEED;
-                            this.x += (dx / dist) * speed;
-                            this.y += (dy / dist) * speed;
-                        }
+                        targetCellX = this.cellX + DIR_VECTORS[dir].x;
+                        targetCellY = this.cellY + DIR_VECTORS[dir].y;
+                        found = true;
                         break;
                     }
                 }
             }
 
-            this.enforceWallCollision(maze);
+            if (found) {
+                const targetX = targetCellX * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_X;
+                const targetY = targetCellY * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_Y;
+                this.moveTowards(targetX, targetY, CONFIG.CHASE_SPEED, maze);
+            }
         }
     }
 
@@ -1232,34 +1433,33 @@
             const playerCellX = Math.floor((player.x - CONFIG.MAZE_OFFSET_X) / CONFIG.CELL_SIZE);
             const playerCellY = Math.floor((player.y - CONFIG.MAZE_OFFSET_Y) / CONFIG.CELL_SIZE);
             
+            let targetCellX = this.cellX;
+            let targetCellY = this.cellY;
+            let found = false;
+            
             const directions = Utils.shuffle([0, 1, 2, 3]);
             for (const dir of directions) {
                 if (maze.canMove(this.cellX, this.cellY, dir)) {
-                    const targetCellX = this.cellX + DIR_VECTORS[dir].x;
-                    const targetCellY = this.cellY + DIR_VECTORS[dir].y;
+                    const newCellX = this.cellX + DIR_VECTORS[dir].x;
+                    const newCellY = this.cellY + DIR_VECTORS[dir].y;
                     
                     const currentDist = Utils.manhattanDistance(this.cellX, this.cellY, playerCellX, playerCellY);
-                    const newDist = Utils.manhattanDistance(targetCellX, targetCellY, playerCellX, playerCellY);
+                    const newDist = Utils.manhattanDistance(newCellX, newCellY, playerCellX, playerCellY);
                     
                     if (newDist < currentDist) {
-                        const targetX = targetCellX * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_X;
-                        const targetY = targetCellY * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_Y;
-                        
-                        const dx = targetX - this.x;
-                        const dy = targetY - this.y;
-                        const dist = Math.sqrt(dx * dx + dy * dy);
-                        
-                        if (dist > 1) {
-                            const speed = CONFIG.TELEPORT_SPEED;
-                            this.x += (dx / dist) * speed;
-                            this.y += (dy / dist) * speed;
-                        }
+                        targetCellX = newCellX;
+                        targetCellY = newCellY;
+                        found = true;
                         break;
                     }
                 }
             }
 
-            this.enforceWallCollision(maze);
+            if (found) {
+                const targetX = targetCellX * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_X;
+                const targetY = targetCellY * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_Y;
+                this.moveTowards(targetX, targetY, CONFIG.TELEPORT_SPEED, maze);
+            }
         }
 
         render(ctx) {
