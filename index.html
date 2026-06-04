@@ -383,37 +383,111 @@
             return cell && !cell.walls[direction];
         }
 
-        // 检查像素位置的移动碰撞
+        // 检查像素位置的移动碰撞 - 改进版：8点检测+安全边距
         checkCollision(x, y, radius, dx, dy) {
             const result = { x: true, y: true };
+            const safetyMargin = 2;
+            const checkRadius = radius + safetyMargin;
             
             const newX = x + dx;
             const newY = y + dy;
             
-            const corners = [
-                { x: newX - radius, y: y - radius },
-                { x: newX + radius, y: y - radius },
-                { x: newX - radius, y: y + radius },
-                { x: newX + radius, y: y + radius }
+            const checkPointsX = [
+                { x: newX - checkRadius, y: y },
+                { x: newX + checkRadius, y: y },
+                { x: newX - checkRadius * 0.7, y: y - checkRadius * 0.7 },
+                { x: newX + checkRadius * 0.7, y: y - checkRadius * 0.7 },
+                { x: newX - checkRadius * 0.7, y: y + checkRadius * 0.7 },
+                { x: newX + checkRadius * 0.7, y: y + checkRadius * 0.7 }
             ];
             
-            result.x = !corners.some(c => this._isPointInWall(c.x, c.y));
+            result.x = !checkPointsX.some(c => this._isPointInWall(c.x, c.y));
             
-            corners[0].x = x - radius;
-            corners[0].y = newY - radius;
-            corners[1].x = x + radius;
-            corners[1].y = newY - radius;
-            corners[2].x = x - radius;
-            corners[2].y = newY + radius;
-            corners[3].x = x + radius;
-            corners[3].y = newY + radius;
+            const checkPointsY = [
+                { x: x, y: newY - checkRadius },
+                { x: x, y: newY + checkRadius },
+                { x: x - checkRadius * 0.7, y: newY - checkRadius * 0.7 },
+                { x: x + checkRadius * 0.7, y: newY - checkRadius * 0.7 },
+                { x: x - checkRadius * 0.7, y: newY + checkRadius * 0.7 },
+                { x: x + checkRadius * 0.7, y: newY + checkRadius * 0.7 }
+            ];
             
-            result.y = !corners.some(c => this._isPointInWall(c.x, c.y));
+            result.y = !checkPointsY.some(c => this._isPointInWall(c.x, c.y));
             
             return result;
         }
 
-        // 检查点是否在墙内
+        // 检查当前位置是否已经在墙内（用于修正卡住的情况）
+        isInWall(x, y, radius) {
+            const checkRadius = radius;
+            const checkPoints = [
+                { x: x, y: y },
+                { x: x - checkRadius, y: y },
+                { x: x + checkRadius, y: y },
+                { x: x, y: y - checkRadius },
+                { x: x, y: y + checkRadius },
+                { x: x - checkRadius * 0.5, y: y - checkRadius * 0.5 },
+                { x: x + checkRadius * 0.5, y: y - checkRadius * 0.5 },
+                { x: x - checkRadius * 0.5, y: y + checkRadius * 0.5 },
+                { x: x + checkRadius * 0.5, y: y + checkRadius * 0.5 }
+            ];
+            
+            return checkPoints.some(p => this._isPointInWall(p.x, p.y));
+        }
+
+        // 将位置从墙内推出
+        pushOutOfWall(x, y, radius) {
+            const pushSteps = 8;
+            const pushDist = 2;
+            
+            for (let i = 0; i < pushSteps; i++) {
+                if (!this.isInWall(x, y, radius)) {
+                    break;
+                }
+                
+                const directions = [
+                    { dx: pushDist, dy: 0 },
+                    { dx: -pushDist, dy: 0 },
+                    { dx: 0, dy: pushDist },
+                    { dx: 0, dy: -pushDist },
+                    { dx: pushDist * 0.7, dy: pushDist * 0.7 },
+                    { dx: -pushDist * 0.7, dy: pushDist * 0.7 },
+                    { dx: pushDist * 0.7, dy: -pushDist * 0.7 },
+                    { dx: -pushDist * 0.7, dy: -pushDist * 0.7 }
+                ];
+                
+                let bestX = x;
+                let bestY = y;
+                let bestPenalty = Infinity;
+                
+                for (const dir of directions) {
+                    const testX = x + dir.dx;
+                    const testY = y + dir.dy;
+                    
+                    if (!this.isInWall(testX, testY, radius)) {
+                        const moveDist = Math.abs(dir.dx) + Math.abs(dir.dy);
+                        if (moveDist < bestPenalty) {
+                            bestPenalty = moveDist;
+                            bestX = testX;
+                            bestY = testY;
+                        }
+                    }
+                }
+                
+                if (bestPenalty < Infinity) {
+                    x = bestX;
+                    y = bestY;
+                } else {
+                    const randomDir = directions[Math.floor(Math.random() * directions.length)];
+                    x += randomDir.dx;
+                    y += randomDir.dy;
+                }
+            }
+            
+            return { x, y };
+        }
+
+        // 检查点是否在墙内 - 改进版：增加碰撞厚度
         _isPointInWall(px, py) {
             const localX = px - this.offsetX;
             const localY = py - this.offsetY;
@@ -431,7 +505,7 @@
             
             const innerX = localX - cellX * CONFIG.CELL_SIZE;
             const innerY = localY - cellY * CONFIG.CELL_SIZE;
-            const thickness = CONFIG.WALL_THICKNESS;
+            const thickness = CONFIG.WALL_THICKNESS + 2;
             
             if (cell.walls[Direction.TOP] && innerY < thickness) return true;
             if (cell.walls[Direction.BOTTOM] && innerY > CONFIG.CELL_SIZE - thickness) return true;
@@ -777,6 +851,12 @@
             if (collision.x) this.x += moveX;
             if (collision.y) this.y += moveY;
 
+            if (maze.isInWall(this.x, this.y, this.radius)) {
+                const newPos = maze.pushOutOfWall(this.x, this.y, this.radius);
+                this.x = newPos.x;
+                this.y = newPos.y;
+            }
+
             if ((dx !== 0 || dy !== 0) && (collision.x || collision.y)) {
                 this.trailTimer += deltaTime;
                 if (this.trailTimer > 30) {
@@ -891,6 +971,15 @@
             
             ctx.restore();
         }
+
+        enforceWallCollision(maze) {
+            if (maze.isInWall(this.x, this.y, this.radius)) {
+                const newPos = maze.pushOutOfWall(this.x, this.y, this.radius);
+                this.x = newPos.x;
+                this.y = newPos.y;
+                this._updateCellPosition();
+            }
+        }
     }
 
     // =========================================================================
@@ -941,6 +1030,8 @@
             } else {
                 this._patrol(deltaTime);
             }
+
+            this.enforceWallCollision(maze);
         }
 
         _patrol(deltaTime) {
@@ -1071,6 +1162,8 @@
                     }
                 }
             }
+
+            this.enforceWallCollision(maze);
         }
     }
 
@@ -1165,6 +1258,8 @@
                     }
                 }
             }
+
+            this.enforceWallCollision(maze);
         }
 
         render(ctx) {
