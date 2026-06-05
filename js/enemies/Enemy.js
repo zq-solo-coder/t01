@@ -122,15 +122,17 @@ class Enemy {
 
     _setState(newState) {
         if (this.state === newState) return;
+
+        if (this.state === EnemyState.CHASE) {
+            this.chaseDuration = 0;
+        }
+
         this.state = newState;
         this.stateTimer = 0;
 
         if (newState === EnemyState.SEARCH) {
             this._generateSearchPoints();
             this.searchIndex = 0;
-        }
-        if (newState === EnemyState.CHASE) {
-            this.chaseDuration = 0;
         }
     }
 
