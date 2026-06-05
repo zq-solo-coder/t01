@@ -16,7 +16,7 @@ class ParticleSystem {
                 return particle;
             }
         }
-        return this.pool[0];
+        return this.activeParticles.shift();
     }
 
     emit(x, y, color, count = 10, speed = 3, life = 500, size = 4) {
