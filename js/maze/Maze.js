@@ -1,9 +1,10 @@
 'use strict';
 
 class Maze {
-    constructor(width, height) {
+    constructor(width, height, level = 1) {
         this.width = width;
         this.height = height;
+        this.level = level;
         this.cells = [];
         this.startCell = null;
         this.endCell = null;
@@ -15,6 +16,8 @@ class Maze {
     generate() {
         this._initCells();
         this._generateMainPath();
+        this._addLoops();
+        this._addHideNiches();
         this._addDeadEnds();
         this._setStartAndEnd();
     }
@@ -53,6 +56,117 @@ class Maze {
                 this.mainPath.push(next);
             } else {
                 stack.pop();
+            }
+        }
+    }
+
+    _addLoops() {
+        const loopCount = Math.max(2, 5 - Math.floor(this.level / 2));
+        const candidates = [];
+
+        for (let y = 0; y < this.height; y++) {
+            for (let x = 0; x < this.width; x++) {
+                const cell = this.getCell(x, y);
+                if (!cell.visited) continue;
+
+                if (x < this.width - 1) {
+                    const right = this.getCell(x + 1, y);
+                    if (right.visited && cell.walls[Direction.RIGHT]) {
+                        candidates.push({ c1: cell, c2: right, dir: Direction.RIGHT });
+                    }
+                }
+                if (y < this.height - 1) {
+                    const bottom = this.getCell(x, y + 1);
+                    if (bottom.visited && cell.walls[Direction.BOTTOM]) {
+                        candidates.push({ c1: cell, c2: bottom, dir: Direction.BOTTOM });
+                    }
+                }
+            }
+        }
+
+        const shuffled = Utils.shuffle(candidates);
+        let created = 0;
+        for (const pair of shuffled) {
+            if (created >= loopCount) break;
+            this._removeWall(pair.c1, pair.c2);
+            created++;
+        }
+    }
+
+    _addHideNiches() {
+        const nicheCount = Math.max(3, 6 - Math.floor(this.level / 3));
+        const nicheCells = [];
+
+        const step = Math.max(3, Math.floor(this.mainPath.length / nicheCount));
+        for (let i = step; i < this.mainPath.length - 1 && nicheCells.length < nicheCount; i += step) {
+            const pathCell = this.mainPath[i];
+            if (this._isEdgeCell(pathCell)) continue;
+
+            const prevCell = this.mainPath[i - 1];
+            const nextCell = this.mainPath[i + 1];
+            const pathDirs = new Set();
+            if (prevCell) {
+                const dx = prevCell.x - pathCell.x;
+                const dy = prevCell.y - pathCell.y;
+                if (dx === 1) pathDirs.add(Direction.RIGHT);
+                else if (dx === -1) pathDirs.add(Direction.LEFT);
+                else if (dy === 1) pathDirs.add(Direction.BOTTOM);
+                else if (dy === -1) pathDirs.add(Direction.TOP);
+            }
+            if (nextCell) {
+                const dx = nextCell.x - pathCell.x;
+                const dy = nextCell.y - pathCell.y;
+                if (dx === 1) pathDirs.add(Direction.RIGHT);
+                else if (dx === -1) pathDirs.add(Direction.LEFT);
+                else if (dy === 1) pathDirs.add(Direction.BOTTOM);
+                else if (dy === -1) pathDirs.add(Direction.TOP);
+            }
+
+            const perpendicularDirs = [];
+            if (!pathDirs.has(Direction.TOP) && !pathDirs.has(Direction.BOTTOM)) {
+                perpendicularDirs.push(Direction.TOP, Direction.BOTTOM);
+            }
+            if (!pathDirs.has(Direction.LEFT) && !pathDirs.has(Direction.RIGHT)) {
+                perpendicularDirs.push(Direction.LEFT, Direction.RIGHT);
+            }
+            if (perpendicularDirs.length === 0) {
+                for (let d = 0; d < 4; d++) {
+                    if (!pathDirs.has(d)) perpendicularDirs.push(d);
+                }
+            }
+
+            const shuffledDirs = Utils.shuffle(perpendicularDirs);
+            for (const dir of shuffledDirs) {
+                const nx = pathCell.x + DIR_VECTORS[dir].x;
+                const ny = pathCell.y + DIR_VECTORS[dir].y;
+                const nicheEntry = this.getCell(nx, ny);
+
+                if (nicheEntry && !nicheEntry.visited && !this._isEdgeCell(nicheEntry)) {
+                    this._removeWall(pathCell, nicheEntry);
+                    nicheEntry.visited = true;
+                    nicheEntry.isHideNiche = true;
+                    nicheCells.push(nicheEntry);
+
+                    if (Utils.randomChoice([true, false])) {
+                        const depth = Utils.randomInt(1, 2);
+                        let current = nicheEntry;
+                        for (let d = 0; d < depth; d++) {
+                            const nnx = current.x + DIR_VECTORS[dir].x;
+                            const nny = current.y + DIR_VECTORS[dir].y;
+                            const deeper = this.getCell(nnx, nny);
+                            if (deeper && !deeper.visited && !this._isEdgeCell(deeper)) {
+                                this._removeWall(current, deeper);
+                                deeper.visited = true;
+                                deeper.isHideNiche = true;
+                                nicheCells.push(deeper);
+                                current = deeper;
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                    break;
+                }
             }
         }
     }
@@ -491,29 +605,49 @@ class Maze {
 
     render(ctx) {
         ctx.save();
-        
+
+        const pulse = Math.sin(Date.now() / 400) * 0.2 + 0.8;
+
         for (let y = 0; y < this.height; y++) {
             for (let x = 0; x < this.width; x++) {
                 const cell = this.cells[y][x];
                 const px = this.offsetX + x * CONFIG.CELL_SIZE;
                 const py = this.offsetY + y * CONFIG.CELL_SIZE;
-                
-                ctx.fillStyle = '#1a1a2e';
-                ctx.fillRect(px, py, CONFIG.CELL_SIZE, CONFIG.CELL_SIZE);
+
+                if (cell.isHideNiche) {
+                    ctx.fillStyle = CONFIG.COLORS.NICHE_BG;
+                    ctx.fillRect(px, py, CONFIG.CELL_SIZE, CONFIG.CELL_SIZE);
+
+                    ctx.save();
+                    ctx.shadowBlur = CONFIG.GLOW_INTENSITY * 0.6 * pulse;
+                    ctx.shadowColor = CONFIG.COLORS.NICHE_GLOW;
+                    ctx.strokeStyle = CONFIG.COLORS.NICHE_BORDER;
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(
+                        px + CONFIG.WALL_THICKNESS,
+                        py + CONFIG.WALL_THICKNESS,
+                        CONFIG.CELL_SIZE - CONFIG.WALL_THICKNESS * 2,
+                        CONFIG.CELL_SIZE - CONFIG.WALL_THICKNESS * 2
+                    );
+                    ctx.restore();
+                } else {
+                    ctx.fillStyle = '#1a1a2e';
+                    ctx.fillRect(px, py, CONFIG.CELL_SIZE, CONFIG.CELL_SIZE);
+                }
             }
         }
-        
+
         ctx.shadowBlur = CONFIG.GLOW_INTENSITY;
         ctx.shadowColor = CONFIG.COLORS.WALL_GLOW;
         ctx.strokeStyle = CONFIG.COLORS.WALL;
         ctx.lineWidth = CONFIG.WALL_THICKNESS;
-        
+
         for (let y = 0; y < this.height; y++) {
             for (let x = 0; x < this.width; x++) {
                 const cell = this.cells[y][x];
                 const px = this.offsetX + x * CONFIG.CELL_SIZE;
                 const py = this.offsetY + y * CONFIG.CELL_SIZE;
-                
+
                 if (cell.walls[Direction.TOP]) {
                     ctx.beginPath();
                     ctx.moveTo(px, py);
@@ -540,9 +674,9 @@ class Maze {
                 }
             }
         }
-        
+
         ctx.restore();
-        
+
         this._renderExit(ctx);
     }
 

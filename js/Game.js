@@ -110,7 +110,7 @@ class Game {
     }
 
     _initLevel() {
-        this.maze = new Maze(CONFIG.MAZE_WIDTH, CONFIG.MAZE_HEIGHT);
+        this.maze = new Maze(CONFIG.MAZE_WIDTH, CONFIG.MAZE_HEIGHT, this.level);
         this.maze.generate();
 
         CONFIG.MAZE_OFFSET_X = this.maze.offsetX;

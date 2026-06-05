@@ -7,5 +7,6 @@ class Cell {
         this.walls = [true, true, true, true];
         this.visited = false;
         this.isOnMainPath = false;
+        this.isHideNiche = false;
     }
 }
