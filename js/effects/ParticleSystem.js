@@ -5,7 +5,7 @@ class ParticleSystem {
         this.pool = [];
         this.activeParticles = [];
         this.hardLimit = hardLimit;
-        this._forceReclaimThreshold = 30;
+        this._minReclaimableLife = 100;
 
         for (let i = 0; i < initialSize; i++) {
             this.pool.push(new Particle());
@@ -26,18 +26,18 @@ class ParticleSystem {
             }
         }
 
-        let oldestParticle = null;
-        let minLife = Infinity;
+        let candidate = null;
+        let maxLife = -1;
         for (const particle of this.activeParticles) {
-            if (particle.life < minLife) {
-                minLife = particle.life;
-                oldestParticle = particle;
+            if (particle.life > maxLife) {
+                maxLife = particle.life;
+                candidate = particle;
             }
         }
 
-        if (oldestParticle !== null && minLife <= this._forceReclaimThreshold) {
-            this._removeFromActive(oldestParticle);
-            return oldestParticle;
+        if (candidate !== null && maxLife >= this._minReclaimableLife) {
+            this._removeFromActive(candidate);
+            return candidate;
         }
 
         if (this.pool.length < this.hardLimit) {
@@ -46,9 +46,9 @@ class ParticleSystem {
             return newParticle;
         }
 
-        if (oldestParticle !== null) {
-            this._removeFromActive(oldestParticle);
-            return oldestParticle;
+        if (candidate !== null) {
+            this._removeFromActive(candidate);
+            return candidate;
         }
 
         return this.pool[0];
