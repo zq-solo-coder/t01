@@ -520,36 +520,24 @@ class Maze {
                     ctx.lineTo(px + CONFIG.CELL_SIZE, py);
                     ctx.stroke();
                 }
+                if (cell.walls[Direction.RIGHT]) {
+                    ctx.beginPath();
+                    ctx.moveTo(px + CONFIG.CELL_SIZE, py);
+                    ctx.lineTo(px + CONFIG.CELL_SIZE, py + CONFIG.CELL_SIZE);
+                    ctx.stroke();
+                }
+                if (cell.walls[Direction.BOTTOM]) {
+                    ctx.beginPath();
+                    ctx.moveTo(px, py + CONFIG.CELL_SIZE);
+                    ctx.lineTo(px + CONFIG.CELL_SIZE, py + CONFIG.CELL_SIZE);
+                    ctx.stroke();
+                }
                 if (cell.walls[Direction.LEFT]) {
                     ctx.beginPath();
                     ctx.moveTo(px, py);
                     ctx.lineTo(px, py + CONFIG.CELL_SIZE);
                     ctx.stroke();
                 }
-            }
-        }
-        
-        for (let x = 0; x < this.width; x++) {
-            const cell = this.cells[this.height - 1][x];
-            if (cell.walls[Direction.BOTTOM]) {
-                const px = this.offsetX + x * CONFIG.CELL_SIZE;
-                const py = this.offsetY + (this.height - 1) * CONFIG.CELL_SIZE;
-                ctx.beginPath();
-                ctx.moveTo(px, py + CONFIG.CELL_SIZE);
-                ctx.lineTo(px + CONFIG.CELL_SIZE, py + CONFIG.CELL_SIZE);
-                ctx.stroke();
-            }
-        }
-        
-        for (let y = 0; y < this.height; y++) {
-            const cell = this.cells[y][this.width - 1];
-            if (cell.walls[Direction.RIGHT]) {
-                const px = this.offsetX + (this.width - 1) * CONFIG.CELL_SIZE;
-                const py = this.offsetY + y * CONFIG.CELL_SIZE;
-                ctx.beginPath();
-                ctx.moveTo(px + CONFIG.CELL_SIZE, py);
-                ctx.lineTo(px + CONFIG.CELL_SIZE, py + CONFIG.CELL_SIZE);
-                ctx.stroke();
             }
         }
         
