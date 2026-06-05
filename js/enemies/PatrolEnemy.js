@@ -86,13 +86,7 @@ class PatrolEnemy extends Enemy {
 
     _searchLastSeen(maze, deltaTime) {
         if (this.currentPath.length === 0 || this.currentPathIndex >= this.currentPath.length) {
-            if (this.searchIndex < this.searchPoints.length) {
-                const target = this.searchPoints[this.searchIndex];
-                this.searchIndex++;
-                this.currentPath = maze.findPath(this.cellX, this.cellY, target.x, target.y);
-                this.currentPathIndex = 0;
-            } else {
-                this._setState(EnemyState.PATROL);
+            if (!this._advanceSearchTarget(maze)) {
                 return;
             }
         }

@@ -257,6 +257,21 @@ class Enemy {
         }
     }
 
+    _advanceSearchTarget(maze) {
+        while (this.searchIndex < this.searchPoints.length) {
+            const target = this.searchPoints[this.searchIndex];
+            this.searchIndex++;
+            const path = maze.findPath(this.cellX, this.cellY, target.x, target.y);
+            if (path.length > 0) {
+                this.currentPath = path;
+                this.currentPathIndex = 0;
+                return true;
+            }
+        }
+        this._setState(EnemyState.PATROL);
+        return false;
+    }
+
     checkCollision(player) {
         const dist = Utils.distance(this.x, this.y, player.x, player.y);
         return dist < this.radius + player.radius;
