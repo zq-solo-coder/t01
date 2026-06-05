@@ -1,0 +1,46 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html, body {
+    width: 100%;
+    height: 100%;
+    background: #0a0a1a;
+    overflow: hidden;
+    font-family: 'Consolas', 'Monaco', monospace;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+#gameContainer {
+    position: relative;
+    width: 800px;
+    height: 600px;
+    transform-origin: center center;
+}
+
+#gameCanvas {
+    display: block;
+    background: #0a0a1a;
+    image-rendering: pixelated;
+}
+
+.scanline {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    background: repeating-linear-gradient(
+        0deg,
+        rgba(0, 0, 0, 0.1) 0px,
+        rgba(0, 0, 0, 0.1) 1px,
+        transparent 1px,
+        transparent 2px
+    );
+    opacity: 0.3;
+}
