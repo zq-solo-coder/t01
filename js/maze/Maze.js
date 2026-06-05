@@ -37,20 +37,20 @@ class Maze {
         const startX = 0;
         const startY = Math.floor(this.height / 2);
         const startCell = this.getCell(startX, startY);
-        startCell.visited = true;
+        startCell.isCarved = true;
         startCell.isOnMainPath = true;
-        
+
         const stack = [startCell];
         this.mainPath = [startCell];
 
         while (stack.length > 0) {
             const current = stack[stack.length - 1];
-            const neighbors = this._getUnvisitedNeighbors(current);
+            const neighbors = this._getUncarvedNeighbors(current);
 
             if (neighbors.length > 0) {
                 const next = Utils.randomChoice(neighbors);
                 this._removeWall(current, next);
-                next.visited = true;
+                next.isCarved = true;
                 next.isOnMainPath = true;
                 stack.push(next);
                 this.mainPath.push(next);
@@ -62,43 +62,93 @@ class Maze {
 
     _addLoops() {
         const loopCount = Math.max(2, 5 - Math.floor(this.level / 2));
-        const candidates = [];
+        const seenKeys = new Set();
+        const allCandidates = [];
 
         for (let y = 0; y < this.height; y++) {
             for (let x = 0; x < this.width; x++) {
                 const cell = this.getCell(x, y);
-                if (!cell.visited) continue;
+                if (!cell.isCarved || cell.isHideNiche) continue;
 
-                if (x < this.width - 1) {
-                    const right = this.getCell(x + 1, y);
-                    if (right.visited && cell.walls[Direction.RIGHT]) {
-                        candidates.push({ c1: cell, c2: right, dir: Direction.RIGHT });
-                    }
-                }
-                if (y < this.height - 1) {
-                    const bottom = this.getCell(x, y + 1);
-                    if (bottom.visited && cell.walls[Direction.BOTTOM]) {
-                        candidates.push({ c1: cell, c2: bottom, dir: Direction.BOTTOM });
-                    }
+                for (let dir = 0; dir < 4; dir++) {
+                    const nx = x + DIR_VECTORS[dir].x;
+                    const ny = y + DIR_VECTORS[dir].y;
+                    const neighbor = this.getCell(nx, ny);
+                    if (!neighbor) continue;
+                    if (!neighbor.isCarved || neighbor.isHideNiche) continue;
+                    if (!cell.walls[dir]) continue;
+
+                    const key = [
+                        Math.min(x, nx),
+                        Math.min(y, ny),
+                        Math.max(x, nx),
+                        Math.max(y, ny)
+                    ].join(',');
+                    if (seenKeys.has(key)) continue;
+                    seenKeys.add(key);
+
+                    allCandidates.push({
+                        c1: cell,
+                        c2: neighbor,
+                        zoneX: Math.floor(x / Math.max(1, Math.ceil(this.width / 3))),
+                        zoneY: Math.floor(y / Math.max(1, Math.ceil(this.height / 2)))
+                    });
                 }
             }
         }
 
-        const shuffled = Utils.shuffle(candidates);
+        const zones = new Map();
+        for (const c of allCandidates) {
+            const zk = `${c.zoneX},${c.zoneY}`;
+            if (!zones.has(zk)) zones.set(zk, []);
+            zones.get(zk).push(c);
+        }
+        for (const list of zones.values()) Utils.shuffle(list);
+        const zoneKeys = Utils.shuffle([...zones.keys()]);
+
         let created = 0;
-        for (const pair of shuffled) {
-            if (created >= loopCount) break;
-            this._removeWall(pair.c1, pair.c2);
-            created++;
+        let round = 0;
+        while (created < loopCount && zoneKeys.length > 0) {
+            let progressed = false;
+            for (const zk of zoneKeys) {
+                const list = zones.get(zk);
+                if (round < list.length) {
+                    const pair = list[round];
+                    if (pair.c1.walls[pair.c1.x < pair.c2.x ? Direction.RIGHT :
+                                     pair.c1.x > pair.c2.x ? Direction.LEFT :
+                                     pair.c1.y < pair.c2.y ? Direction.BOTTOM : Direction.TOP]) {
+                        this._removeWall(pair.c1, pair.c2);
+                        created++;
+                        progressed = true;
+                        if (created >= loopCount) break;
+                    }
+                }
+            }
+            if (!progressed) break;
+            round++;
+        }
+
+        if (created < loopCount) {
+            const remaining = Utils.shuffle(allCandidates);
+            for (const pair of remaining) {
+                const dir = pair.c1.x < pair.c2.x ? Direction.RIGHT :
+                            pair.c1.x > pair.c2.x ? Direction.LEFT :
+                            pair.c1.y < pair.c2.y ? Direction.BOTTOM : Direction.TOP;
+                if (pair.c1.walls[dir]) {
+                    this._removeWall(pair.c1, pair.c2);
+                    created++;
+                    if (created >= loopCount) break;
+                }
+            }
         }
     }
 
     _addHideNiches() {
         const nicheCount = Math.max(3, 6 - Math.floor(this.level / 3));
         const nicheCells = [];
+        const candidates = [];
 
-        const step = Math.max(3, Math.floor(this.mainPath.length / nicheCount));
-        for (let i = step; i < this.mainPath.length - 1 && nicheCells.length < nicheCount; i += step) {
+        for (let i = 1; i < this.mainPath.length - 1; i++) {
             const pathCell = this.mainPath[i];
             if (this._isEdgeCell(pathCell)) continue;
 
@@ -135,37 +185,42 @@ class Maze {
                 }
             }
 
-            const shuffledDirs = Utils.shuffle(perpendicularDirs);
-            for (const dir of shuffledDirs) {
+            for (const dir of perpendicularDirs) {
                 const nx = pathCell.x + DIR_VECTORS[dir].x;
                 const ny = pathCell.y + DIR_VECTORS[dir].y;
                 const nicheEntry = this.getCell(nx, ny);
+                if (nicheEntry && !nicheEntry.isCarved && !nicheEntry.isHideNiche && !this._isEdgeCell(nicheEntry)) {
+                    candidates.push({ pathCell, dir, entryCell: nicheEntry });
+                }
+            }
+        }
 
-                if (nicheEntry && !nicheEntry.visited && !this._isEdgeCell(nicheEntry)) {
-                    this._removeWall(pathCell, nicheEntry);
-                    nicheEntry.visited = true;
-                    nicheEntry.isHideNiche = true;
-                    nicheCells.push(nicheEntry);
+        const shuffled = Utils.shuffle(candidates);
+        for (const cand of shuffled) {
+            if (nicheCells.length >= nicheCount) break;
+            if (cand.entryCell.isCarved || cand.entryCell.isHideNiche) continue;
 
-                    if (Utils.randomChoice([true, false])) {
-                        const depth = Utils.randomInt(1, 2);
-                        let current = nicheEntry;
-                        for (let d = 0; d < depth; d++) {
-                            const nnx = current.x + DIR_VECTORS[dir].x;
-                            const nny = current.y + DIR_VECTORS[dir].y;
-                            const deeper = this.getCell(nnx, nny);
-                            if (deeper && !deeper.visited && !this._isEdgeCell(deeper)) {
-                                this._removeWall(current, deeper);
-                                deeper.visited = true;
-                                deeper.isHideNiche = true;
-                                nicheCells.push(deeper);
-                                current = deeper;
-                            } else {
-                                break;
-                            }
-                        }
+            this._removeWall(cand.pathCell, cand.entryCell);
+            cand.entryCell.isCarved = true;
+            cand.entryCell.isHideNiche = true;
+            nicheCells.push(cand.entryCell);
+
+            if (Utils.randomChoice([true, false])) {
+                const depth = Utils.randomInt(1, 2);
+                let current = cand.entryCell;
+                for (let d = 0; d < depth; d++) {
+                    const nnx = current.x + DIR_VECTORS[cand.dir].x;
+                    const nny = current.y + DIR_VECTORS[cand.dir].y;
+                    const deeper = this.getCell(nnx, nny);
+                    if (deeper && !deeper.isCarved && !deeper.isHideNiche && !this._isEdgeCell(deeper)) {
+                        this._removeWall(current, deeper);
+                        deeper.isCarved = true;
+                        deeper.isHideNiche = true;
+                        nicheCells.push(deeper);
+                        current = deeper;
+                    } else {
+                        break;
                     }
-                    break;
                 }
             }
         }
@@ -184,14 +239,14 @@ class Maze {
     _growBranch(startCell) {
         let current = startCell;
         const branchLength = Utils.randomInt(2, 4);
-        
+
         for (let i = 0; i < branchLength; i++) {
-            const neighbors = this._getUnvisitedNeighbors(current);
+            const neighbors = this._getUncarvedNeighbors(current);
             if (neighbors.length === 0) break;
-            
+
             const next = Utils.randomChoice(neighbors);
             this._removeWall(current, next);
-            next.visited = true;
+            next.isCarved = true;
             current = next;
         }
     }
@@ -201,13 +256,13 @@ class Maze {
         this.endCell = this.getCell(this.width - 1, Math.floor(this.height / 2));
     }
 
-    _getUnvisitedNeighbors(cell) {
+    _getUncarvedNeighbors(cell) {
         const neighbors = [];
         for (let dir = 0; dir < 4; dir++) {
             const nx = cell.x + DIR_VECTORS[dir].x;
             const ny = cell.y + DIR_VECTORS[dir].y;
             const neighbor = this.getCell(nx, ny);
-            if (neighbor && !neighbor.visited) {
+            if (neighbor && !neighbor.isCarved) {
                 neighbors.push(neighbor);
             }
         }
@@ -606,34 +661,14 @@ class Maze {
     render(ctx) {
         ctx.save();
 
-        const pulse = Math.sin(Date.now() / 400) * 0.2 + 0.8;
-
         for (let y = 0; y < this.height; y++) {
             for (let x = 0; x < this.width; x++) {
                 const cell = this.cells[y][x];
                 const px = this.offsetX + x * CONFIG.CELL_SIZE;
                 const py = this.offsetY + y * CONFIG.CELL_SIZE;
 
-                if (cell.isHideNiche) {
-                    ctx.fillStyle = CONFIG.COLORS.NICHE_BG;
-                    ctx.fillRect(px, py, CONFIG.CELL_SIZE, CONFIG.CELL_SIZE);
-
-                    ctx.save();
-                    ctx.shadowBlur = CONFIG.GLOW_INTENSITY * 0.6 * pulse;
-                    ctx.shadowColor = CONFIG.COLORS.NICHE_GLOW;
-                    ctx.strokeStyle = CONFIG.COLORS.NICHE_BORDER;
-                    ctx.lineWidth = 2;
-                    ctx.strokeRect(
-                        px + CONFIG.WALL_THICKNESS,
-                        py + CONFIG.WALL_THICKNESS,
-                        CONFIG.CELL_SIZE - CONFIG.WALL_THICKNESS * 2,
-                        CONFIG.CELL_SIZE - CONFIG.WALL_THICKNESS * 2
-                    );
-                    ctx.restore();
-                } else {
-                    ctx.fillStyle = '#1a1a2e';
-                    ctx.fillRect(px, py, CONFIG.CELL_SIZE, CONFIG.CELL_SIZE);
-                }
+                ctx.fillStyle = cell.isHideNiche ? CONFIG.COLORS.NICHE_BG : '#1a1a2e';
+                ctx.fillRect(px, py, CONFIG.CELL_SIZE, CONFIG.CELL_SIZE);
             }
         }
 
@@ -670,6 +705,51 @@ class Maze {
                     ctx.beginPath();
                     ctx.moveTo(px, py);
                     ctx.lineTo(px, py + CONFIG.CELL_SIZE);
+                    ctx.stroke();
+                }
+            }
+        }
+
+        const pulse = Math.sin(Date.now() / 400) * 0.2 + 0.8;
+        ctx.shadowBlur = CONFIG.GLOW_INTENSITY * 0.6 * pulse;
+        ctx.shadowColor = CONFIG.COLORS.NICHE_GLOW;
+        ctx.strokeStyle = CONFIG.COLORS.NICHE_BORDER;
+        ctx.lineWidth = 2;
+
+        const inset = CONFIG.WALL_THICKNESS;
+        for (let y = 0; y < this.height; y++) {
+            for (let x = 0; x < this.width; x++) {
+                const cell = this.cells[y][x];
+                if (!cell.isHideNiche) continue;
+                const px = this.offsetX + x * CONFIG.CELL_SIZE;
+                const py = this.offsetY + y * CONFIG.CELL_SIZE;
+                const innerL = px + inset;
+                const innerT = py + inset;
+                const innerR = px + CONFIG.CELL_SIZE - inset;
+                const innerB = py + CONFIG.CELL_SIZE - inset;
+
+                if (cell.walls[Direction.TOP]) {
+                    ctx.beginPath();
+                    ctx.moveTo(innerL, innerT);
+                    ctx.lineTo(innerR, innerT);
+                    ctx.stroke();
+                }
+                if (cell.walls[Direction.RIGHT]) {
+                    ctx.beginPath();
+                    ctx.moveTo(innerR, innerT);
+                    ctx.lineTo(innerR, innerB);
+                    ctx.stroke();
+                }
+                if (cell.walls[Direction.BOTTOM]) {
+                    ctx.beginPath();
+                    ctx.moveTo(innerL, innerB);
+                    ctx.lineTo(innerR, innerB);
+                    ctx.stroke();
+                }
+                if (cell.walls[Direction.LEFT]) {
+                    ctx.beginPath();
+                    ctx.moveTo(innerL, innerT);
+                    ctx.lineTo(innerL, innerB);
                     ctx.stroke();
                 }
             }
