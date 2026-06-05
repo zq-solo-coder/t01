@@ -520,22 +520,22 @@ class Maze {
                     ctx.lineTo(px + CONFIG.CELL_SIZE, py);
                     ctx.stroke();
                 }
-                if (cell.walls[Direction.LEFT]) {
+                if (cell.walls[Direction.RIGHT]) {
                     ctx.beginPath();
-                    ctx.moveTo(px, py);
-                    ctx.lineTo(px, py + CONFIG.CELL_SIZE);
+                    ctx.moveTo(px + CONFIG.CELL_SIZE, py);
+                    ctx.lineTo(px + CONFIG.CELL_SIZE, py + CONFIG.CELL_SIZE);
                     ctx.stroke();
                 }
-                if (cell.walls[Direction.BOTTOM] && y === this.height - 1) {
+                if (cell.walls[Direction.BOTTOM]) {
                     ctx.beginPath();
                     ctx.moveTo(px, py + CONFIG.CELL_SIZE);
                     ctx.lineTo(px + CONFIG.CELL_SIZE, py + CONFIG.CELL_SIZE);
                     ctx.stroke();
                 }
-                if (cell.walls[Direction.RIGHT] && x === this.width - 1) {
+                if (cell.walls[Direction.LEFT]) {
                     ctx.beginPath();
-                    ctx.moveTo(px + CONFIG.CELL_SIZE, py);
-                    ctx.lineTo(px + CONFIG.CELL_SIZE, py + CONFIG.CELL_SIZE);
+                    ctx.moveTo(px, py);
+                    ctx.lineTo(px, py + CONFIG.CELL_SIZE);
                     ctx.stroke();
                 }
             }
