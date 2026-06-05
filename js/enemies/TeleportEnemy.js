@@ -147,8 +147,8 @@ class TeleportEnemy extends Enemy {
                 this.currentPath = maze.findPath(this.cellX, this.cellY, target.x, target.y);
                 this.currentPathIndex = 0;
             } else {
-                this._generateSearchPoints();
-                this.searchIndex = 0;
+                this._setState(EnemyState.PATROL);
+                return;
             }
         }
         this._followPath(maze, CONFIG.PATROL_SPEED, deltaTime);
