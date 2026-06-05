@@ -62,6 +62,8 @@ class Maze {
 
     _addLoops() {
         const loopCount = Math.max(2, 5 - Math.floor(this.level / 2));
+        const zoneCols = Math.max(1, Math.ceil(this.width / 3));
+        const zoneRows = Math.max(1, Math.ceil(this.height / 2));
         const seenKeys = new Set();
         const allCandidates = [];
 
@@ -78,20 +80,29 @@ class Maze {
                     if (!neighbor.isCarved || neighbor.isHideNiche) continue;
                     if (!cell.walls[dir]) continue;
 
-                    const key = [
-                        Math.min(x, nx),
-                        Math.min(y, ny),
-                        Math.max(x, nx),
-                        Math.max(y, ny)
-                    ].join(',');
+                    const minX = Math.min(x, nx);
+                    const minY = Math.min(y, ny);
+                    const maxX = Math.max(x, nx);
+                    const maxY = Math.max(y, ny);
+                    const key = `${minX},${minY},${maxX},${maxY}`;
                     if (seenKeys.has(key)) continue;
                     seenKeys.add(key);
 
+                    const midX = (x + nx) / 2;
+                    const midY = (y + ny) / 2;
+                    const zoneX = Math.floor(midX / zoneCols);
+                    const zoneY = Math.floor(midY / zoneRows);
+                    const wallDir = cell.x < neighbor.x ? Direction.RIGHT :
+                                    cell.x > neighbor.x ? Direction.LEFT :
+                                    cell.y < neighbor.y ? Direction.BOTTOM : Direction.TOP;
+
                     allCandidates.push({
+                        key,
                         c1: cell,
                         c2: neighbor,
-                        zoneX: Math.floor(x / Math.max(1, Math.ceil(this.width / 3))),
-                        zoneY: Math.floor(y / Math.max(1, Math.ceil(this.height / 2)))
+                        wallDir,
+                        zoneX,
+                        zoneY
                     });
                 }
             }
@@ -106,22 +117,29 @@ class Maze {
         for (const list of zones.values()) Utils.shuffle(list);
         const zoneKeys = Utils.shuffle([...zones.keys()]);
 
+        const processed = new Set();
+        const zoneLists = [...zones.values()];
+        const maxRound = zoneLists.length > 0
+            ? Math.max(...zoneLists.map(l => l.length))
+            : 0;
+
         let created = 0;
         let round = 0;
-        while (created < loopCount && zoneKeys.length > 0) {
+        while (created < loopCount && round < maxRound) {
             let progressed = false;
             for (const zk of zoneKeys) {
                 const list = zones.get(zk);
-                if (round < list.length) {
-                    const pair = list[round];
-                    if (pair.c1.walls[pair.c1.x < pair.c2.x ? Direction.RIGHT :
-                                     pair.c1.x > pair.c2.x ? Direction.LEFT :
-                                     pair.c1.y < pair.c2.y ? Direction.BOTTOM : Direction.TOP]) {
-                        this._removeWall(pair.c1, pair.c2);
-                        created++;
-                        progressed = true;
-                        if (created >= loopCount) break;
-                    }
+                if (!list || round >= list.length) continue;
+
+                const pair = list[round];
+                if (processed.has(pair.key)) continue;
+                processed.add(pair.key);
+
+                if (pair.c1.walls[pair.wallDir]) {
+                    this._removeWall(pair.c1, pair.c2);
+                    created++;
+                    progressed = true;
+                    if (created >= loopCount) break;
                 }
             }
             if (!progressed) break;
@@ -131,10 +149,9 @@ class Maze {
         if (created < loopCount) {
             const remaining = Utils.shuffle(allCandidates);
             for (const pair of remaining) {
-                const dir = pair.c1.x < pair.c2.x ? Direction.RIGHT :
-                            pair.c1.x > pair.c2.x ? Direction.LEFT :
-                            pair.c1.y < pair.c2.y ? Direction.BOTTOM : Direction.TOP;
-                if (pair.c1.walls[dir]) {
+                if (processed.has(pair.key)) continue;
+                processed.add(pair.key);
+                if (pair.c1.walls[pair.wallDir]) {
                     this._removeWall(pair.c1, pair.c2);
                     created++;
                     if (created >= loopCount) break;
@@ -184,6 +201,7 @@ class Maze {
                     if (!pathDirs.has(d)) perpendicularDirs.push(d);
                 }
             }
+            Utils.shuffle(perpendicularDirs);
 
             for (const dir of perpendicularDirs) {
                 const nx = pathCell.x + DIR_VECTORS[dir].x;
