@@ -3,90 +3,102 @@
 class PatrolEnemy extends Enemy {
     constructor(x, y) {
         super(x, y, 'patrol');
-        this.path = [];
-        this.pathIndex = 0;
-        this.direction = 1;
-        this.isChasing = false;
-        this.chasePath = [];
-        this.chaseTimer = 0;
-        this.moveTimer = 0;
+        this.patrolPath = [];
+        this.patrolIndex = 0;
+        this.patrolDirection = 1;
     }
 
     setPatrolPath(path) {
-        this.path = path;
+        this.patrolPath = path;
         if (path.length > 0) {
             this.x = path[0].x * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_X;
             this.y = path[0].y * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_Y;
             this._updateCellPosition();
+            if (path.length > 1) {
+                const next = path[1];
+                const nextX = next.x * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_X;
+                const nextY = next.y * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_Y;
+                this._updateFacingDirection(nextX, nextY);
+            }
         }
     }
 
     update(player, maze, deltaTime) {
         this._updateCellPosition();
+        this._updateAIState(player, maze, deltaTime);
+        this.pathRecalcTimer += deltaTime;
 
-        const playerCellX = Math.floor((player.x - CONFIG.MAZE_OFFSET_X) / CONFIG.CELL_SIZE);
-        const playerCellY = Math.floor((player.y - CONFIG.MAZE_OFFSET_Y) / CONFIG.CELL_SIZE);
-        const distToPlayer = Utils.manhattanDistance(this.cellX, this.cellY, playerCellX, playerCellY);
-
-        if (distToPlayer <= CONFIG.VISION_RANGE && !this.isChasing) {
-            this.isChasing = true;
-            this.chasePath = maze.findPath(this.cellX, this.cellY, playerCellX, playerCellY);
-            this.chaseTimer = 3000;
-        }
-
-        if (this.isChasing) {
-            this.chaseTimer -= deltaTime;
-            if (this.chaseTimer <= 0 || this.chasePath.length === 0) {
-                this.isChasing = false;
-            } else {
-                this._chasePlayer(maze, deltaTime);
-            }
-        } else {
-            this._patrol(maze, deltaTime);
+        switch (this.state) {
+            case EnemyState.PATROL:
+                this._patrol(maze, deltaTime);
+                break;
+            case EnemyState.ALERT:
+                this._standAndLook(player, deltaTime);
+                break;
+            case EnemyState.CHASE:
+                this._chasePlayer(player, maze, deltaTime);
+                break;
+            case EnemyState.SEARCH:
+                this._searchLastSeen(maze, deltaTime);
+                break;
+            case EnemyState.FATIGUE:
+                this._rest(deltaTime);
+                break;
         }
     }
 
     _patrol(maze, deltaTime) {
-        if (this.path.length < 2) return;
+        if (this.patrolPath.length < 2) return;
 
-        this.moveTimer += deltaTime;
-        if (this.moveTimer < 16) return;
-        this.moveTimer = 0;
-
-        const target = this.path[this.pathIndex];
-        const targetX = target.x * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_X;
-        const targetY = target.y * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_Y;
-
-        const dist = Utils.distance(this.x, this.y, targetX, targetY);
-
-        if (dist < 5) {
-            this.pathIndex += this.direction;
-            if (this.pathIndex >= this.path.length || this.pathIndex < 0) {
-                this.direction *= -1;
-                this.pathIndex += this.direction * 2;
+        if (this.currentPath.length === 0 || this.currentPathIndex >= this.currentPath.length) {
+            const target = this.patrolPath[this.patrolIndex];
+            this.patrolIndex += this.patrolDirection;
+            if (this.patrolIndex >= this.patrolPath.length || this.patrolIndex < 0) {
+                this.patrolDirection *= -1;
+                this.patrolIndex += this.patrolDirection * 2;
             }
-        } else {
-            this.moveTowards(targetX, targetY, CONFIG.PATROL_SPEED, maze);
+            this.currentPath = maze.findPath(this.cellX, this.cellY, target.x, target.y);
+            this.currentPathIndex = 0;
+        }
+        this._followPath(maze, CONFIG.PATROL_SPEED, deltaTime);
+    }
+
+    _standAndLook(player, deltaTime) {
+        if (this.canSeePlayer) {
+            this._updateFacingDirection(player.x, player.y);
         }
     }
 
-    _chasePlayer(maze, deltaTime) {
-        if (this.chasePath.length === 0) return;
+    _chasePlayer(player, maze, deltaTime) {
+        const playerCellX = Math.floor((player.x - CONFIG.MAZE_OFFSET_X) / CONFIG.CELL_SIZE);
+        const playerCellY = Math.floor((player.y - CONFIG.MAZE_OFFSET_Y) / CONFIG.CELL_SIZE);
 
-        this.moveTimer += deltaTime;
-        if (this.moveTimer < 16) return;
-        this.moveTimer = 0;
-
-        const target = this.chasePath[0];
-        const targetX = target.x * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_X;
-        const targetY = target.y * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_Y;
-
-        const dist = Utils.distance(this.x, this.y, targetX, targetY);
-
-        if (dist < 8) {
-            this.chasePath.shift();
-        } else {
-            this.moveTowards(targetX, targetY, CONFIG.CHASE_SPEED, maze);
+        if (this.pathRecalcTimer >= CONFIG.AI_PATH_RECALC_INTERVAL ||
+            this.currentPath.length === 0 ||
+            this.currentPathIndex >= this.currentPath.length) {
+            this.currentPath = maze.findPath(this.cellX, this.cellY, playerCellX, playerCellY);
+            this.currentPathIndex = 0;
+            this.pathRecalcTimer = 0;
         }
+
+        this._followPath(maze, CONFIG.CHASE_SPEED, deltaTime);
+    }
+
+    _searchLastSeen(maze, deltaTime) {
+        if (this.currentPath.length === 0 || this.currentPathIndex >= this.currentPath.length) {
+            if (this.searchIndex < this.searchPoints.length) {
+                const target = this.searchPoints[this.searchIndex];
+                this.searchIndex++;
+                this.currentPath = maze.findPath(this.cellX, this.cellY, target.x, target.y);
+                this.currentPathIndex = 0;
+            } else {
+                this._setState(EnemyState.PATROL);
+                return;
+            }
+        }
+        this._followPath(maze, CONFIG.PATROL_SPEED, deltaTime);
+    }
+
+    _rest(deltaTime) {
     }
 }

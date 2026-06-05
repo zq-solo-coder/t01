@@ -14,8 +14,6 @@ class TeleportEnemy extends Enemy {
     update(player, maze, deltaTime) {
         this._updateCellPosition();
 
-        this.teleportTimer += deltaTime;
-
         if (this.isWarning) {
             this.warningTimer -= deltaTime;
             if (this.warningTimer <= 0) {
@@ -24,70 +22,139 @@ class TeleportEnemy extends Enemy {
                 this._updateCellPosition();
                 this.isWarning = false;
                 this.teleportTimer = 0;
+                this.currentPath = [];
+                this.currentPathIndex = 0;
             }
             return;
         }
 
-        if (this.teleportTimer >= this.teleportInterval) {
-            const playerCellX = Math.floor((player.x - CONFIG.MAZE_OFFSET_X) / CONFIG.CELL_SIZE);
-            const playerCellY = Math.floor((player.y - CONFIG.MAZE_OFFSET_Y) / CONFIG.CELL_SIZE);
+        this._updateAIState(player, maze, deltaTime);
+        this.pathRecalcTimer += deltaTime;
+        this.teleportTimer += deltaTime;
 
-            const validPositions = [];
-            for (let dx = -5; dx <= 5; dx++) {
-                for (let dy = -5; dy <= 5; dy++) {
-                    const dist = Math.abs(dx) + Math.abs(dy);
-                    if (dist >= 3 && dist <= 5) {
-                        const nx = playerCellX + dx;
-                        const ny = playerCellY + dy;
-                        const cell = maze.getCell(nx, ny);
-                        if (cell) {
-                            validPositions.push({ x: nx, y: ny });
-                        }
+        const shouldTeleport = (this.state === EnemyState.CHASE || this.state === EnemyState.ALERT)
+            && this.teleportTimer >= this.teleportInterval
+            && !this.canSeePlayer;
+
+        if (shouldTeleport) {
+            this._tryTeleport(player, maze);
+            if (this.isWarning) return;
+        }
+
+        switch (this.state) {
+            case EnemyState.PATROL:
+                this._wander(maze, deltaTime);
+                break;
+            case EnemyState.ALERT:
+                this._standAndLook(player, deltaTime);
+                break;
+            case EnemyState.CHASE:
+                this._chasePlayer(player, maze, deltaTime);
+                break;
+            case EnemyState.SEARCH:
+                this._searchLastSeen(maze, deltaTime);
+                break;
+            case EnemyState.FATIGUE:
+                this._rest(deltaTime);
+                break;
+        }
+    }
+
+    _tryTeleport(player, maze) {
+        const playerCellX = Math.floor((player.x - CONFIG.MAZE_OFFSET_X) / CONFIG.CELL_SIZE);
+        const playerCellY = Math.floor((player.y - CONFIG.MAZE_OFFSET_Y) / CONFIG.CELL_SIZE);
+
+        const validPositions = [];
+        for (let dx = -5; dx <= 5; dx++) {
+            for (let dy = -5; dy <= 5; dy++) {
+                const dist = Math.abs(dx) + Math.abs(dy);
+                if (dist >= 3 && dist <= 5) {
+                    const nx = playerCellX + dx;
+                    const ny = playerCellY + dy;
+                    const cell = maze.getCell(nx, ny);
+                    if (cell && cell.isCarved) {
+                        validPositions.push({ x: nx, y: ny });
                     }
                 }
             }
-
-            if (validPositions.length > 0) {
-                const target = Utils.randomChoice(validPositions);
-                this.targetX = target.x * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_X;
-                this.targetY = target.y * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_Y;
-                this.isWarning = true;
-                this.warningTimer = CONFIG.TELEPORT_WARNING;
-            } else {
-                this.teleportTimer = 0;
-            }
         }
 
-        const playerCellX = Math.floor((player.x - CONFIG.MAZE_OFFSET_X) / CONFIG.CELL_SIZE);
-        const playerCellY = Math.floor((player.y - CONFIG.MAZE_OFFSET_Y) / CONFIG.CELL_SIZE);
-        
-        let targetCellX = this.cellX;
-        let targetCellY = this.cellY;
-        let found = false;
-        
-        const directions = Utils.shuffle([0, 1, 2, 3]);
-        for (const dir of directions) {
-            if (maze.canMove(this.cellX, this.cellY, dir)) {
-                const newCellX = this.cellX + DIR_VECTORS[dir].x;
-                const newCellY = this.cellY + DIR_VECTORS[dir].y;
-                
-                const currentDist = Utils.manhattanDistance(this.cellX, this.cellY, playerCellX, playerCellY);
-                const newDist = Utils.manhattanDistance(newCellX, newCellY, playerCellX, playerCellY);
-                
-                if (newDist < currentDist) {
-                    targetCellX = newCellX;
-                    targetCellY = newCellY;
-                    found = true;
-                    break;
+        if (validPositions.length > 0) {
+            const target = Utils.randomChoice(validPositions);
+            this.targetX = target.x * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_X;
+            this.targetY = target.y * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_Y;
+            this.isWarning = true;
+            this.warningTimer = CONFIG.TELEPORT_WARNING;
+        } else {
+            this.teleportTimer = 0;
+        }
+    }
+
+    _wander(maze, deltaTime) {
+        if (this.currentPath.length === 0 || this.currentPathIndex >= this.currentPath.length) {
+            const target = this._getRandomNearbyCell(maze);
+            if (target) {
+                this.currentPath = maze.findPath(this.cellX, this.cellY, target.x, target.y);
+                this.currentPathIndex = 0;
+            }
+        }
+        this._followPath(maze, CONFIG.PATROL_SPEED * 0.8, deltaTime);
+    }
+
+    _getRandomNearbyCell(maze) {
+        const candidates = [];
+        const range = 5;
+        for (let dx = -range; dx <= range; dx++) {
+            for (let dy = -range; dy <= range; dy++) {
+                const nx = this.cellX + dx;
+                const ny = this.cellY + dy;
+                const cell = maze.getCell(nx, ny);
+                if (cell && cell.isCarved) {
+                    candidates.push({ x: nx, y: ny });
                 }
             }
         }
+        if (candidates.length === 0) return null;
+        return Utils.randomChoice(candidates);
+    }
 
-        if (found) {
-            const targetX = targetCellX * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_X;
-            const targetY = targetCellY * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_Y;
-            this.moveTowards(targetX, targetY, CONFIG.TELEPORT_SPEED, maze);
+    _standAndLook(player, deltaTime) {
+        if (this.canSeePlayer) {
+            this._updateFacingDirection(player.x, player.y);
         }
+    }
+
+    _chasePlayer(player, maze, deltaTime) {
+        const playerCellX = Math.floor((player.x - CONFIG.MAZE_OFFSET_X) / CONFIG.CELL_SIZE);
+        const playerCellY = Math.floor((player.y - CONFIG.MAZE_OFFSET_Y) / CONFIG.CELL_SIZE);
+
+        if (this.pathRecalcTimer >= CONFIG.AI_PATH_RECALC_INTERVAL ||
+            this.currentPath.length === 0 ||
+            this.currentPathIndex >= this.currentPath.length) {
+            this.currentPath = maze.findPath(this.cellX, this.cellY, playerCellX, playerCellY);
+            this.currentPathIndex = 0;
+            this.pathRecalcTimer = 0;
+        }
+
+        this._followPath(maze, CONFIG.TELEPORT_SPEED, deltaTime);
+    }
+
+    _searchLastSeen(maze, deltaTime) {
+        if (this.currentPath.length === 0 || this.currentPathIndex >= this.currentPath.length) {
+            if (this.searchIndex < this.searchPoints.length) {
+                const target = this.searchPoints[this.searchIndex];
+                this.searchIndex++;
+                this.currentPath = maze.findPath(this.cellX, this.cellY, target.x, target.y);
+                this.currentPathIndex = 0;
+            } else {
+                this._generateSearchPoints();
+                this.searchIndex = 0;
+            }
+        }
+        this._followPath(maze, CONFIG.PATROL_SPEED, deltaTime);
+    }
+
+    _rest(deltaTime) {
     }
 
     render(ctx) {
@@ -98,17 +165,17 @@ class TeleportEnemy extends Enemy {
             ctx.shadowBlur = 30;
             ctx.shadowColor = CONFIG.COLORS.ENEMY_GLOW;
             ctx.fillStyle = CONFIG.COLORS.ENEMY;
-            
+
             ctx.beginPath();
             ctx.arc(this.targetX, this.targetY, this.radius * 1.5, 0, Math.PI * 2);
             ctx.fill();
-            
+
             ctx.strokeStyle = CONFIG.COLORS.ENEMY;
             ctx.lineWidth = 2;
             ctx.beginPath();
             ctx.arc(this.targetX, this.targetY, this.radius * 2 + pulse * 20, 0, Math.PI * 2);
             ctx.stroke();
-            
+
             ctx.restore();
         }
 

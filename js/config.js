@@ -20,9 +20,18 @@ const CONFIG = {
     PATROL_SPEED: 1.5,
     CHASE_SPEED: 2.0,
     TELEPORT_SPEED: 1.8,
-    VISION_RANGE: 3,
+    VISION_RANGE: 4,
+    VISION_ANGLE: 100,
     TELEPORT_INTERVAL: 5000,
     TELEPORT_WARNING: 1500,
+
+    AI_REACTION_DELAY: 400,
+    AI_ALERT_DURATION: 1500,
+    AI_SEARCH_DURATION: 4000,
+    AI_FATIGUE_THRESHOLD: 7000,
+    AI_FATIGUE_REST: 2000,
+    AI_HEARING_RANGE: 5,
+    AI_PATH_RECALC_INTERVAL: 500,
     
     CORE_RADIUS: 10,
     CORE_COUNT_MIN: 5,
@@ -65,6 +74,14 @@ const GameState = {
     PLAYING: 'playing',
     PAUSED: 'paused',
     GAMEOVER: 'gameover'
+};
+
+const EnemyState = {
+    PATROL: 'patrol',
+    ALERT: 'alert',
+    CHASE: 'chase',
+    SEARCH: 'search',
+    FATIGUE: 'fatigue'
 };
 
 const Direction = {
