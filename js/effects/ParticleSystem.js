@@ -1,12 +1,21 @@
 'use strict';
 
 class ParticleSystem {
-    constructor(maxParticles = 200) {
+    constructor(initialSize = 200, hardLimit = 600) {
         this.pool = [];
         this.activeParticles = [];
-        
-        for (let i = 0; i < maxParticles; i++) {
+        this.hardLimit = hardLimit;
+        this._forceReclaimThreshold = 30;
+
+        for (let i = 0; i < initialSize; i++) {
             this.pool.push(new Particle());
+        }
+    }
+
+    _removeFromActive(particle) {
+        const idx = this.activeParticles.indexOf(particle);
+        if (idx !== -1) {
+            this.activeParticles.splice(idx, 1);
         }
     }
 
@@ -16,7 +25,33 @@ class ParticleSystem {
                 return particle;
             }
         }
-        return this.activeParticles.shift();
+
+        let oldestParticle = null;
+        let minLife = Infinity;
+        for (const particle of this.activeParticles) {
+            if (particle.life < minLife) {
+                minLife = particle.life;
+                oldestParticle = particle;
+            }
+        }
+
+        if (oldestParticle !== null && minLife <= this._forceReclaimThreshold) {
+            this._removeFromActive(oldestParticle);
+            return oldestParticle;
+        }
+
+        if (this.pool.length < this.hardLimit) {
+            const newParticle = new Particle();
+            this.pool.push(newParticle);
+            return newParticle;
+        }
+
+        if (oldestParticle !== null) {
+            this._removeFromActive(oldestParticle);
+            return oldestParticle;
+        }
+
+        return this.pool[0];
     }
 
     emit(x, y, color, count = 10, speed = 3, life = 500, size = 4) {
