@@ -5,8 +5,8 @@ const CONFIG = {
     LOGICAL_HEIGHT: 600,
     
     CELL_SIZE: 48,
-    MAZE_WIDTH: 15,
-    MAZE_HEIGHT: 11,
+    MAZE_WIDTH: 12,
+    MAZE_HEIGHT: 9,
     WALL_THICKNESS: 3,
     
     PLAYER_RADIUS: 12,
