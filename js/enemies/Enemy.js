@@ -15,6 +15,7 @@ class Enemy {
         this.lastSeenPlayerX = -1;
         this.lastSeenPlayerY = -1;
         this.canSeePlayer = false;
+        this.targetDecoy = null;
 
         this.stateTimer = 0;
         this.chaseDuration = 0;
@@ -26,7 +27,45 @@ class Enemy {
         this.currentPathIndex = 0;
 
         this.moveTimer = 0;
+        this.stunTimer = 0;
 
+        this._updateCellPosition();
+    }
+
+    stun(duration) {
+        this.state = EnemyState.STUNNED;
+        this.stunTimer = duration;
+        this.currentPath = [];
+    }
+
+    pushAway(fromX, fromY, distanceCells, maze) {
+        const dx = this.x - fromX;
+        const dy = this.y - fromY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < 0.01) return;
+
+        const pushDist = distanceCells * CONFIG.CELL_SIZE;
+        const targetX = this.x + (dx / dist) * pushDist;
+        const targetY = this.y + (dy / dist) * pushDist;
+
+        const steps = 10;
+        let finalX = this.x;
+        let finalY = this.y;
+
+        for (let i = 1; i <= steps; i++) {
+            const t = i / steps;
+            const testX = this.x + (targetX - this.x) * t;
+            const testY = this.y + (targetY - this.y) * t;
+            if (maze.isValidPosition(testX, testY, this.radius)) {
+                finalX = testX;
+                finalY = testY;
+            } else {
+                break;
+            }
+        }
+
+        this.x = finalX;
+        this.y = finalY;
         this._updateCellPosition();
     }
 
@@ -108,6 +147,13 @@ class Enemy {
         return Math.abs(angleDiff) <= halfCone;
     }
 
+    canDetectTarget(target, maze) {
+        if (!target) return false;
+        if (!this._isTargetInVisionCone(target)) return false;
+        if (!this._hasLineOfSightTo(target, maze)) return false;
+        return true;
+    }
+
     canDetectPlayer(player, maze) {
         if (!this._isInVisionCone(player)) return false;
         if (!this._hasLineOfSight(player, maze)) return false;
@@ -115,9 +161,60 @@ class Enemy {
     }
 
     canHearPlayer(player) {
-        if (!player.isBoosting) return false;
+        if (!player.isBoosting && !player.isPhaseDashing) return false;
         const dist = Utils.distance(this.x, this.y, player.x, player.y);
         return dist <= CONFIG.AI_HEARING_RANGE * CONFIG.CELL_SIZE;
+    }
+
+    _isTargetInVisionCone(target) {
+        const dx = target.x - this.x;
+        const dy = target.y - this.y;
+        const dist = Utils.distance(this.x, this.y, target.x, target.y);
+
+        if (dist < CONFIG.CELL_SIZE * 0.5) return true;
+
+        const angleToPlayer = Math.atan2(dy, dx);
+        const facingAngle = this._getFacingAngle();
+
+        let angleDiff = angleToPlayer - facingAngle;
+        while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+        while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+
+        const halfCone = (CONFIG.VISION_ANGLE * Math.PI / 180) / 2;
+        return Math.abs(angleDiff) <= halfCone;
+    }
+
+    _hasLineOfSightTo(target, maze) {
+        const x0 = this.x;
+        const y0 = this.y;
+        const x1 = target.x;
+        const y1 = target.y;
+
+        const dist = Utils.distance(x0, y0, x1, y1);
+        const maxDist = CONFIG.VISION_RANGE * CONFIG.CELL_SIZE;
+        if (dist > maxDist) return false;
+
+        const steps = Math.ceil(dist / (CONFIG.CELL_SIZE * 0.25));
+        for (let i = 1; i < steps; i++) {
+            const t = i / steps;
+            const px = x0 + (x1 - x0) * t;
+            const py = y0 + (y1 - y0) * t;
+
+            const cellX = Math.floor((px - CONFIG.MAZE_OFFSET_X) / CONFIG.CELL_SIZE);
+            const cellY = Math.floor((py - CONFIG.MAZE_OFFSET_Y) / CONFIG.CELL_SIZE);
+            const cell = maze.getCell(cellX, cellY);
+            if (!cell) return false;
+
+            const localX = px - CONFIG.MAZE_OFFSET_X - cellX * CONFIG.CELL_SIZE;
+            const localY = py - CONFIG.MAZE_OFFSET_Y - cellY * CONFIG.CELL_SIZE;
+            const margin = 4;
+
+            if (cell.walls[Direction.TOP] && localY < margin) return false;
+            if (cell.walls[Direction.BOTTOM] && localY > CONFIG.CELL_SIZE - margin) return false;
+            if (cell.walls[Direction.LEFT] && localX < margin) return false;
+            if (cell.walls[Direction.RIGHT] && localX > CONFIG.CELL_SIZE - margin) return false;
+        }
+        return true;
     }
 
     _setState(newState) {
@@ -154,18 +251,38 @@ class Enemy {
         }
     }
 
-    _updateAIState(player, maze, deltaTime) {
+    _updateAIState(player, maze, deltaTime, decoys = []) {
+        if (this.state === EnemyState.STUNNED) {
+            this.stunTimer -= deltaTime;
+            if (this.stunTimer <= 0) {
+                this._setState(EnemyState.PATROL);
+                this.targetDecoy = null;
+            }
+            return;
+        }
+
+        let activeDecoy = null;
+        for (const decoy of decoys) {
+            if (decoy && !decoy.expired && this.canDetectTarget(decoy, maze)) {
+                activeDecoy = decoy;
+                break;
+            }
+        }
+        this.targetDecoy = activeDecoy;
+
+        const effectiveTarget = activeDecoy || player;
+        const canSeeTarget = activeDecoy ? this.canDetectTarget(activeDecoy, maze) : this.canDetectPlayer(player, maze);
         this.canSeePlayer = this.canDetectPlayer(player, maze);
         const canHear = this.canHearPlayer(player);
 
-        if (this.canSeePlayer) {
-            this.lastSeenPlayerX = Math.floor((player.x - CONFIG.MAZE_OFFSET_X) / CONFIG.CELL_SIZE);
-            this.lastSeenPlayerY = Math.floor((player.y - CONFIG.MAZE_OFFSET_Y) / CONFIG.CELL_SIZE);
+        if (canSeeTarget) {
+            this.lastSeenPlayerX = Math.floor((effectiveTarget.x - CONFIG.MAZE_OFFSET_X) / CONFIG.CELL_SIZE);
+            this.lastSeenPlayerY = Math.floor((effectiveTarget.y - CONFIG.MAZE_OFFSET_Y) / CONFIG.CELL_SIZE);
         }
 
         switch (this.state) {
             case EnemyState.PATROL:
-                if (this.canSeePlayer) {
+                if (canSeeTarget) {
                     this.reactionTimer = CONFIG.AI_REACTION_DELAY;
                     this._setState(EnemyState.ALERT);
                 } else if (canHear) {
@@ -178,9 +295,9 @@ class Enemy {
             case EnemyState.ALERT:
                 this.stateTimer += deltaTime;
                 this.reactionTimer -= deltaTime;
-                if (this.canSeePlayer && this.reactionTimer <= 0) {
+                if (canSeeTarget && this.reactionTimer <= 0) {
                     this._setState(EnemyState.CHASE);
-                } else if (!this.canSeePlayer) {
+                } else if (!canSeeTarget) {
                     if (this.stateTimer >= CONFIG.AI_ALERT_DURATION) {
                         this._setState(EnemyState.SEARCH);
                     }
@@ -193,7 +310,7 @@ class Enemy {
                 this.chaseDuration += deltaTime;
                 this.stateTimer += deltaTime;
 
-                if (!this.canSeePlayer) {
+                if (!canSeeTarget) {
                     if (this.stateTimer >= 800) {
                         this._setState(EnemyState.SEARCH);
                     }
@@ -208,7 +325,7 @@ class Enemy {
 
             case EnemyState.SEARCH:
                 this.stateTimer += deltaTime;
-                if (this.canSeePlayer) {
+                if (canSeeTarget) {
                     this.reactionTimer = CONFIG.AI_REACTION_DELAY * 0.5;
                     this._setState(EnemyState.ALERT);
                 } else if (this.stateTimer >= CONFIG.AI_SEARCH_DURATION) {
@@ -218,7 +335,7 @@ class Enemy {
 
             case EnemyState.FATIGUE:
                 this.stateTimer += deltaTime;
-                if (this.canSeePlayer) {
+                if (canSeeTarget) {
                     this.reactionTimer = CONFIG.AI_REACTION_DELAY;
                     this._setState(EnemyState.ALERT);
                 } else if (this.stateTimer >= CONFIG.AI_FATIGUE_REST) {
@@ -278,6 +395,8 @@ class Enemy {
     }
 
     renderVisionRange(ctx) {
+        if (this.state === EnemyState.STUNNED) return;
+
         ctx.save();
 
         if (this.state === EnemyState.CHASE) {
@@ -307,29 +426,49 @@ class Enemy {
         this.renderVisionRange(ctx);
 
         ctx.save();
-        ctx.shadowBlur = CONFIG.GLOW_INTENSITY;
-        ctx.shadowColor = CONFIG.COLORS.ENEMY_GLOW;
-        ctx.fillStyle = CONFIG.COLORS.ENEMY;
+        if (this.state === EnemyState.STUNNED) {
+            const pulse = Math.sin(Date.now() / 100) * 0.3 + 0.7;
+            ctx.shadowBlur = CONFIG.GLOW_INTENSITY * pulse;
+            ctx.shadowColor = CONFIG.COLORS.ENEMY_STUN_GLOW;
+            ctx.fillStyle = CONFIG.COLORS.ENEMY_STUN;
+        } else {
+            ctx.shadowBlur = CONFIG.GLOW_INTENSITY;
+            ctx.shadowColor = CONFIG.COLORS.ENEMY_GLOW;
+            ctx.fillStyle = CONFIG.COLORS.ENEMY;
+        }
 
         ctx.beginPath();
         ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
         ctx.fill();
 
-        const facingAngle = this._getFacingAngle();
-        const eyeOffsetX = Math.cos(facingAngle) * 5;
-        const eyeOffsetY = Math.sin(facingAngle) * 5;
+        if (this.state !== EnemyState.STUNNED) {
+            const facingAngle = this._getFacingAngle();
+            const eyeOffsetX = Math.cos(facingAngle) * 5;
+            const eyeOffsetY = Math.sin(facingAngle) * 5;
 
-        ctx.fillStyle = '#000';
-        ctx.beginPath();
-        ctx.arc(this.x + eyeOffsetX - 4, this.y + eyeOffsetY - 2, 3, 0, Math.PI * 2);
-        ctx.arc(this.x + eyeOffsetX + 4, this.y + eyeOffsetY - 2, 3, 0, Math.PI * 2);
-        ctx.fill();
+            ctx.fillStyle = '#000';
+            ctx.beginPath();
+            ctx.arc(this.x + eyeOffsetX - 4, this.y + eyeOffsetY - 2, 3, 0, Math.PI * 2);
+            ctx.arc(this.x + eyeOffsetX + 4, this.y + eyeOffsetY - 2, 3, 0, Math.PI * 2);
+            ctx.fill();
 
-        ctx.fillStyle = '#fff';
-        ctx.beginPath();
-        ctx.arc(this.x + eyeOffsetX - 4, this.y + eyeOffsetY - 2, 1.5, 0, Math.PI * 2);
-        ctx.arc(this.x + eyeOffsetX + 4, this.y + eyeOffsetY - 2, 1.5, 0, Math.PI * 2);
-        ctx.fill();
+            ctx.fillStyle = '#fff';
+            ctx.beginPath();
+            ctx.arc(this.x + eyeOffsetX - 4, this.y + eyeOffsetY - 2, 1.5, 0, Math.PI * 2);
+            ctx.arc(this.x + eyeOffsetX + 4, this.y + eyeOffsetY - 2, 1.5, 0, Math.PI * 2);
+            ctx.fill();
+        } else {
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(this.x - 6, this.y - 4);
+            ctx.lineTo(this.x - 2, this.y);
+            ctx.lineTo(this.x - 6, this.y + 4);
+            ctx.moveTo(this.x + 2, this.y - 4);
+            ctx.lineTo(this.x + 6, this.y);
+            ctx.lineTo(this.x + 2, this.y + 4);
+            ctx.stroke();
+        }
 
         if (this.state === EnemyState.ALERT) {
             ctx.fillStyle = '#ffcc00';
@@ -341,6 +480,12 @@ class Enemy {
             ctx.font = 'bold 16px Consolas';
             ctx.textAlign = 'center';
             ctx.fillText('!', this.x, this.y - this.radius - 8);
+        } else if (this.state === EnemyState.STUNNED) {
+            const pulse = Math.sin(Date.now() / 150);
+            ctx.fillStyle = '#ffff00';
+            ctx.font = 'bold 16px Consolas';
+            ctx.textAlign = 'center';
+            ctx.fillText('★' + (pulse > 0 ? '☆' : '★'), this.x, this.y - this.radius - 8);
         }
 
         ctx.restore();

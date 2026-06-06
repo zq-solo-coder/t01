@@ -11,8 +11,13 @@ class TeleportEnemy extends Enemy {
         this.teleportInterval = CONFIG.TELEPORT_INTERVAL;
     }
 
-    update(player, maze, deltaTime) {
+    update(player, maze, deltaTime, decoys = []) {
         this._updateCellPosition();
+
+        if (this.state === EnemyState.STUNNED) {
+            this._updateAIState(player, maze, deltaTime, decoys);
+            return;
+        }
 
         if (this.isWarning) {
             this.warningTimer -= deltaTime;
@@ -28,7 +33,10 @@ class TeleportEnemy extends Enemy {
             return;
         }
 
-        this._updateAIState(player, maze, deltaTime);
+        this._updateAIState(player, maze, deltaTime, decoys);
+
+        if (this.state === EnemyState.STUNNED) return;
+
         this.pathRecalcTimer += deltaTime;
         this.teleportTimer += deltaTime;
 
@@ -46,10 +54,10 @@ class TeleportEnemy extends Enemy {
                 this._wander(maze, deltaTime);
                 break;
             case EnemyState.ALERT:
-                this._standAndLook(player, deltaTime);
+                this._standAndLook(player, maze, deltaTime, decoys);
                 break;
             case EnemyState.CHASE:
-                this._chasePlayer(player, maze, deltaTime);
+                this._chasePlayer(player, maze, deltaTime, decoys);
                 break;
             case EnemyState.SEARCH:
                 this._searchLastSeen(maze, deltaTime);
@@ -118,20 +126,22 @@ class TeleportEnemy extends Enemy {
         return Utils.randomChoice(candidates);
     }
 
-    _standAndLook(player, deltaTime) {
-        if (this.canSeePlayer) {
-            this._updateFacingDirection(player.x, player.y);
+    _standAndLook(player, maze, deltaTime, decoys = []) {
+        const target = this.targetDecoy || player;
+        if (this.targetDecoy ? this.canDetectTarget(this.targetDecoy, maze) : this.canSeePlayer) {
+            this._updateFacingDirection(target.x, target.y);
         }
     }
 
-    _chasePlayer(player, maze, deltaTime) {
-        const playerCellX = Math.floor((player.x - CONFIG.MAZE_OFFSET_X) / CONFIG.CELL_SIZE);
-        const playerCellY = Math.floor((player.y - CONFIG.MAZE_OFFSET_Y) / CONFIG.CELL_SIZE);
+    _chasePlayer(player, maze, deltaTime, decoys = []) {
+        const target = this.targetDecoy || player;
+        const targetCellX = Math.floor((target.x - CONFIG.MAZE_OFFSET_X) / CONFIG.CELL_SIZE);
+        const targetCellY = Math.floor((target.y - CONFIG.MAZE_OFFSET_Y) / CONFIG.CELL_SIZE);
 
         if (this.pathRecalcTimer >= CONFIG.AI_PATH_RECALC_INTERVAL ||
             this.currentPath.length === 0 ||
             this.currentPathIndex >= this.currentPath.length) {
-            this.currentPath = maze.findPath(this.cellX, this.cellY, playerCellX, playerCellY);
+            this.currentPath = maze.findPath(this.cellX, this.cellY, targetCellX, targetCellY);
             this.currentPathIndex = 0;
             this.pathRecalcTimer = 0;
         }

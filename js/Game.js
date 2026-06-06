@@ -20,6 +20,8 @@ class Game {
         this.player = null;
         this.enemies = [];
         this.cores = [];
+        this.powerups = [];
+        this.decoys = [];
         this.particleSystem = new ParticleSystem();
         this.audio = new AudioSystem();
         this.screenShake = new ScreenShake();
@@ -75,7 +77,8 @@ class Game {
                 }
             }
 
-            if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
+            if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+                 'ShiftLeft', 'ShiftRight', 'KeyE', 'KeyQ', 'KeyR'].includes(e.code)) {
                 e.preventDefault();
             }
         });
@@ -122,7 +125,9 @@ class Game {
 
         this._spawnEnemies();
         this._spawnCores();
+        this._spawnPowerups();
 
+        this.decoys = [];
         this.particleSystem.clear();
     }
 
@@ -203,6 +208,24 @@ class Game {
         }
     }
 
+    _spawnPowerups() {
+        this.powerups = [];
+
+        const count = Utils.randomInt(CONFIG.POWERUP_COUNT_MIN, CONFIG.POWERUP_COUNT_MAX);
+        const avoidCells = [this.maze.startCell, this.maze.endCell];
+
+        const types = [PowerUpType.SHIELD, PowerUpType.SPEED, PowerUpType.FLASH];
+
+        for (let i = 0; i < count; i++) {
+            const pos = this.maze.getRandomEmptyPosition(avoidCells);
+            if (!pos) continue;
+
+            const type = Utils.randomChoice(types);
+            this.powerups.push(new PowerUp(pos.x, pos.y, type));
+            avoidCells.push({ x: pos.cellX, y: pos.cellY });
+        }
+    }
+
     nextLevel() {
         this.level++;
         this.score += 500 * this.level;
@@ -244,13 +267,30 @@ class Game {
             return;
         }
 
-        const shouldEmitTrail = this.player.update(this.keys, this.maze, deltaTime, this.audio);
-        
-        if (shouldEmitTrail) {
-            this.particleSystem.emitTrail(this.player.x, this.player.y, CONFIG.COLORS.PLAYER);
-            if (this.player.isBoosting) {
+        const events = this.player.update(this.keys, this.maze, deltaTime, this.audio);
+
+        if (events.emitTrail) {
+            const trailColor = this.player.isPhaseDashing ? CONFIG.COLORS.SKILL_PHASE : CONFIG.COLORS.PLAYER;
+            this.particleSystem.emitTrail(this.player.x, this.player.y, trailColor);
+            if (this.player.isBoosting || this.player.isPhaseDashing) {
                 this.audio.playBoost();
             }
+        }
+
+        if (events.emp) {
+            this._triggerEMP();
+        }
+
+        if (events.decoy) {
+            this.decoys.push(new Decoy(this.player.x, this.player.y));
+            this.particleSystem.emit(
+                this.player.x, this.player.y,
+                CONFIG.COLORS.DECOY, 30, 3, 600, 5
+            );
+        }
+
+        if (events.flashbang) {
+            this._triggerFlashbang();
         }
 
         if (this.player.energy <= 0) {
@@ -258,11 +298,26 @@ class Game {
             return;
         }
 
+        for (const decoy of this.decoys) {
+            decoy.update(deltaTime);
+        }
+        this.decoys = this.decoys.filter(d => !d.expired);
+
         for (const enemy of this.enemies) {
-            enemy.update(this.player, this.maze, deltaTime);
-            
+            enemy.update(this.player, this.maze, deltaTime, this.decoys);
+
+            if (enemy.state === EnemyState.STUNNED) continue;
+
             if (enemy.checkCollision(this.player)) {
-                if (this.player.takeDamage()) {
+                const dmgResult = this.player.takeDamage();
+                if (dmgResult === false) continue;
+
+                if (dmgResult === 'shield') {
+                    this.particleSystem.emit(
+                        this.player.x, this.player.y,
+                        CONFIG.COLORS.POWERUP_SHIELD, 25, 4, 600, 5
+                    );
+                } else if (dmgResult === true) {
                     this.screenShake.trigger();
                     this.audio.playHurt();
                     this.player.energy = Math.max(0, this.player.energy - 30);
@@ -275,7 +330,7 @@ class Game {
                         500,
                         4
                     );
-                    
+
                     if (this.player.energy <= 0) {
                         this.gameOver();
                         return;
@@ -286,7 +341,7 @@ class Game {
 
         for (const core of this.cores) {
             core.update(deltaTime);
-            
+
             if (core.checkCollection(this.player)) {
                 this.score += CONFIG.CORE_SCORE_VALUE;
                 this.player.addEnergy(CONFIG.CORE_ENERGY_VALUE);
@@ -300,7 +355,7 @@ class Game {
                     800,
                     5
                 );
-                
+
                 if (this.score > this.highScore) {
                     this.highScore = this.score;
                     this._saveHighScore();
@@ -310,10 +365,19 @@ class Game {
 
         this.cores = this.cores.filter(c => !c.collected);
 
+        for (const powerup of this.powerups) {
+            powerup.update(deltaTime);
+
+            if (powerup.checkCollection(this.player)) {
+                this._applyPowerup(powerup);
+            }
+        }
+        this.powerups = this.powerups.filter(p => !p.collected);
+
         const endX = this.maze.offsetX + this.maze.endCell.x * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2;
         const endY = this.maze.offsetY + this.maze.endCell.y * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2;
         const distToExit = Utils.distance(this.player.x, this.player.y, endX, endY);
-        
+
         if (distToExit < CONFIG.CELL_SIZE / 2) {
             this.nextLevel();
             return;
@@ -321,6 +385,69 @@ class Game {
 
         this.particleSystem.update(deltaTime);
         this.screenShake.update();
+    }
+
+    _triggerEMP() {
+        this.screenShake.trigger();
+        this.audio.playHurt();
+
+        const empRadius = CONFIG.SKILL_EMP_RADIUS * CONFIG.CELL_SIZE;
+        for (const enemy of this.enemies) {
+            const dist = Utils.distance(this.player.x, this.player.y, enemy.x, enemy.y);
+            if (dist <= empRadius) {
+                enemy.pushAway(this.player.x, this.player.y, CONFIG.SKILL_EMP_PUSH_DISTANCE, this.maze);
+                enemy.stun(CONFIG.SKILL_EMP_STUN_DURATION);
+            }
+        }
+
+        this.particleSystem.emit(
+            this.player.x, this.player.y,
+            CONFIG.COLORS.SKILL_EMP, 60, 6, 800, 6
+        );
+    }
+
+    _triggerFlashbang() {
+        const flashRadius = CONFIG.POWERUP_FLASH_RADIUS * CONFIG.CELL_SIZE;
+        for (const enemy of this.enemies) {
+            const dist = Utils.distance(this.player.x, this.player.y, enemy.x, enemy.y);
+            if (dist <= flashRadius) {
+                enemy.stun(CONFIG.POWERUP_FLASH_STUN);
+            }
+        }
+
+        this.particleSystem.emit(
+            this.player.x, this.player.y,
+            CONFIG.COLORS.POWERUP_FLASH, 80, 8, 1000, 8
+        );
+    }
+
+    _applyPowerup(powerup) {
+        this.score += 50;
+        this.audio.playCollect();
+
+        switch (powerup.type) {
+            case PowerUpType.SHIELD:
+                this.player.addShield();
+                this.particleSystem.emit(
+                    powerup.x, powerup.y,
+                    CONFIG.COLORS.POWERUP_SHIELD, 25, 4, 700, 5
+                );
+                break;
+            case PowerUpType.SPEED:
+                this.player.addSpeedBoost();
+                this.particleSystem.emit(
+                    powerup.x, powerup.y,
+                    CONFIG.COLORS.POWERUP_SPEED, 25, 4, 700, 5
+                );
+                break;
+            case PowerUpType.FLASH:
+                this.player.addFlashbang();
+                this.particleSystem.emit(
+                    powerup.x, powerup.y,
+                    CONFIG.COLORS.POWERUP_FLASH, 25, 4, 700, 5
+                );
+                break;
+        }
     }
 
     render() {
@@ -342,6 +469,14 @@ class Game {
 
             for (const core of this.cores) {
                 core.render(ctx);
+            }
+
+            for (const powerup of this.powerups) {
+                powerup.render(ctx);
+            }
+
+            for (const decoy of this.decoys) {
+                decoy.render(ctx);
             }
 
             for (const enemy of this.enemies) {
@@ -395,12 +530,12 @@ class Game {
 
     _renderHUD(ctx) {
         ctx.save();
-        
+
         ctx.fillStyle = CONFIG.COLORS.HUD_BG;
         ctx.fillRect(0, 0, CONFIG.LOGICAL_WIDTH, 45);
 
         ctx.shadowBlur = 10;
-        
+
         ctx.shadowColor = CONFIG.COLORS.WALL_GLOW;
         ctx.fillStyle = CONFIG.COLORS.WALL;
         ctx.font = 'bold 18px Consolas';
@@ -417,7 +552,7 @@ class Game {
         const energyBarY = 10;
         const energyBarWidth = 150;
         const energyBarHeight = 24;
-        
+
         ctx.shadowBlur = 15;
         ctx.shadowColor = CONFIG.COLORS.PLAYER_GLOW;
         ctx.strokeStyle = CONFIG.COLORS.PLAYER;
@@ -426,14 +561,14 @@ class Game {
 
         const energyPercent = this.player.energy / CONFIG.MAX_ENERGY;
         const fillWidth = energyBarWidth * energyPercent;
-        
+
         const energyGradient = ctx.createLinearGradient(
             energyBarX, energyBarY,
             energyBarX + energyBarWidth, energyBarY
         );
         energyGradient.addColorStop(0, CONFIG.COLORS.PLAYER);
         energyGradient.addColorStop(1, CONFIG.COLORS.PLAYER_GLOW);
-        
+
         ctx.fillStyle = energyGradient;
         ctx.fillRect(energyBarX + 2, energyBarY + 2, fillWidth - 4, energyBarHeight - 4);
 
@@ -447,7 +582,156 @@ class Game {
             energyBarY + energyBarHeight / 2
         );
 
+        this._renderSkillBar(ctx);
+
         ctx.restore();
+    }
+
+    _renderSkillBar(ctx) {
+        const barY = CONFIG.LOGICAL_HEIGHT - 55;
+        const barHeight = 45;
+        ctx.fillStyle = CONFIG.COLORS.HUD_BG;
+        ctx.fillRect(0, barY, CONFIG.LOGICAL_WIDTH, barHeight);
+
+        const skills = [
+            {
+                key: 'Shift',
+                label: '相位',
+                color: CONFIG.COLORS.SKILL_PHASE,
+                cooldown: this.player.phaseDashCooldown,
+                maxCooldown: CONFIG.SKILL_PHASE_DASH_COOLDOWN
+            },
+            {
+                key: 'E',
+                label: '震荡',
+                color: CONFIG.COLORS.SKILL_EMP,
+                cooldown: this.player.empCooldown,
+                maxCooldown: CONFIG.SKILL_EMP_COOLDOWN
+            },
+            {
+                key: 'Q',
+                label: '诱饵',
+                color: CONFIG.COLORS.SKILL_DECOY,
+                cooldown: this.player.decoyCooldown,
+                maxCooldown: CONFIG.SKILL_DECOY_COOLDOWN
+            }
+        ];
+
+        const skillSize = 36;
+        const spacing = 12;
+        const totalWidth = skills.length * skillSize + (skills.length - 1) * spacing;
+        let startX = 20;
+        const centerY = barY + barHeight / 2;
+
+        skills.forEach((skill, i) => {
+            const x = startX + i * (skillSize + spacing);
+            const ready = skill.cooldown <= 0;
+            const cdPercent = ready ? 0 : skill.cooldown / skill.maxCooldown;
+
+            ctx.save();
+            ctx.shadowBlur = ready ? 15 : 5;
+            ctx.shadowColor = skill.color;
+
+            ctx.fillStyle = ready ? skill.color : '#333344';
+            ctx.strokeStyle = skill.color;
+            ctx.lineWidth = 2;
+
+            ctx.beginPath();
+            ctx.roundRect(x, centerY - skillSize / 2, skillSize, skillSize, 6);
+            ctx.fill();
+            ctx.stroke();
+
+            if (!ready) {
+                ctx.globalAlpha = 0.7;
+                ctx.fillStyle = '#000000';
+                const fillHeight = skillSize * cdPercent;
+                ctx.fillRect(x + 2, centerY - skillSize / 2 + 2, skillSize - 4, fillHeight - 4);
+                ctx.globalAlpha = 1;
+            }
+
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = ready ? '#ffffff' : '#888888';
+            ctx.font = 'bold 12px Consolas';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            ctx.fillText(skill.label, x + skillSize / 2, centerY - skillSize / 2 + 4);
+
+            ctx.font = 'bold 10px Consolas';
+            ctx.textBaseline = 'bottom';
+            if (!ready) {
+                ctx.fillText((skill.cooldown / 1000).toFixed(1) + 's', x + skillSize / 2, centerY + skillSize / 2 - 2);
+            } else {
+                ctx.fillText('[' + skill.key + ']', x + skillSize / 2, centerY + skillSize / 2 - 2);
+            }
+
+            ctx.restore();
+        });
+
+        startX = 20 + totalWidth + 30;
+
+        const itemSize = 36;
+        const items = [
+            {
+                active: this.player.hasShield,
+                label: '盾',
+                color: CONFIG.COLORS.POWERUP_SHIELD,
+                glow: CONFIG.COLORS.POWERUP_SHIELD_GLOW,
+                key: ''
+            },
+            {
+                active: this.player.speedBoostTimer > 0,
+                label: '速',
+                color: CONFIG.COLORS.POWERUP_SPEED,
+                glow: CONFIG.COLORS.POWERUP_SPEED_GLOW,
+                key: this.player.speedBoostTimer > 0 ? (this.player.speedBoostTimer / 1000).toFixed(1) + 's' : ''
+            },
+            {
+                active: this.player.flashbangCount > 0,
+                label: '闪',
+                color: CONFIG.COLORS.POWERUP_FLASH,
+                glow: CONFIG.COLORS.POWERUP_FLASH_GLOW,
+                key: 'x' + this.player.flashbangCount + ' [R]'
+            }
+        ];
+
+        items.forEach((item, i) => {
+            const x = startX + i * (itemSize + spacing);
+            ctx.save();
+
+            ctx.shadowBlur = item.active ? 15 : 3;
+            ctx.shadowColor = item.glow;
+            ctx.fillStyle = item.active ? item.color : '#222233';
+            ctx.strokeStyle = item.color;
+            ctx.lineWidth = 2;
+
+            ctx.beginPath();
+            ctx.roundRect(x, centerY - itemSize / 2, itemSize, itemSize, 6);
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = item.active ? '#ffffff' : '#555566';
+            ctx.font = 'bold 14px Consolas';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            ctx.fillText(item.label, x + itemSize / 2, centerY - itemSize / 2 + 6);
+
+            if (item.key) {
+                ctx.font = 'bold 10px Consolas';
+                ctx.textBaseline = 'bottom';
+                ctx.fillText(item.key, x + itemSize / 2, centerY + itemSize / 2 - 2);
+            }
+
+            ctx.restore();
+        });
+
+        ctx.shadowBlur = 5;
+        ctx.shadowColor = CONFIG.COLORS.WALL_GLOW;
+        ctx.fillStyle = CONFIG.COLORS.TEXT;
+        ctx.font = '12px Consolas';
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('空格:冲刺(耗能量)', CONFIG.LOGICAL_WIDTH - 20, centerY);
     }
 
     _renderMenu(ctx) {
@@ -481,28 +765,32 @@ class Game {
         ctx.shadowColor = CONFIG.COLORS.ENEMY_GLOW;
         ctx.fillStyle = CONFIG.COLORS.ENEMY;
         ctx.font = '16px Consolas';
-        ctx.fillText('━ 操作说明 ━', CONFIG.LOGICAL_WIDTH / 2, 390);
+        ctx.fillText('━ 操作说明 ━', CONFIG.LOGICAL_WIDTH / 2, 370);
 
         ctx.shadowBlur = 5;
         ctx.fillStyle = CONFIG.COLORS.TEXT;
-        ctx.font = '14px Consolas';
+        ctx.font = '13px Consolas';
         const instructions = [
             'WASD / 方向键 - 移动',
             '空格键 - 加速冲刺（消耗能量）',
+            'Shift - 相位冲刺（穿怪突围，冷却8秒）',
+            'E - 震荡波 EMP（推开并眩晕怪物，冷却15秒）',
+            'Q - 全息诱饵（吸引怪物，冷却20秒）',
+            'R - 使用闪光弹（道具）',
             'ESC - 暂停游戏',
             '',
-            '收集能量核心恢复能量，找到出口进入下一层！'
+            '收集能量核心恢复能量，拾取道具获得增益！'
         ];
-        
+
         instructions.forEach((text, i) => {
-            ctx.fillText(text, CONFIG.LOGICAL_WIDTH / 2, 425 + i * 25);
+            ctx.fillText(text, CONFIG.LOGICAL_WIDTH / 2, 400 + i * 20);
         });
 
         ctx.shadowBlur = 10;
         ctx.shadowColor = CONFIG.COLORS.CORE_GLOW;
         ctx.fillStyle = CONFIG.COLORS.CORE;
         ctx.font = '14px Consolas';
-        ctx.fillText(`最高记录: ${this.highScore} 分 | 最高层数: ${this.highestLevel}`, CONFIG.LOGICAL_WIDTH / 2, 550);
+        ctx.fillText(`最高记录: ${this.highScore} 分 | 最高层数: ${this.highestLevel}`, CONFIG.LOGICAL_WIDTH / 2, 565);
 
         ctx.restore();
     }

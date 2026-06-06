@@ -15,6 +15,16 @@ const CONFIG = {
     MAX_ENERGY: 100,
     ENERGY_DRAIN: 0.4,
     ENERGY_REGEN: 0.05,
+
+    SKILL_PHASE_DASH_COOLDOWN: 8000,
+    SKILL_PHASE_DASH_DURATION: 500,
+    SKILL_PHASE_DASH_SPEED: 6.0,
+    SKILL_EMP_COOLDOWN: 15000,
+    SKILL_EMP_RADIUS: 3,
+    SKILL_EMP_PUSH_DISTANCE: 2.5,
+    SKILL_EMP_STUN_DURATION: 1500,
+    SKILL_DECOY_COOLDOWN: 20000,
+    SKILL_DECOY_DURATION: 3000,
     
     ENEMY_RADIUS: 14,
     PATROL_SPEED: 1.5,
@@ -38,6 +48,16 @@ const CONFIG = {
     CORE_COUNT_MAX: 8,
     CORE_ENERGY_VALUE: 25,
     CORE_SCORE_VALUE: 100,
+
+    POWERUP_RADIUS: 11,
+    POWERUP_SPEED_BOOST: 1.3,
+    POWERUP_SPEED_DURATION: 10000,
+    POWERUP_FLASH_RADIUS: 3,
+    POWERUP_FLASH_STUN: 2000,
+    POWERUP_COUNT_MIN: 2,
+    POWERUP_COUNT_MAX: 3,
+
+    DECOY_RADIUS: 12,
     
     FOG_RADIUS: 140,
     TRAIL_LENGTH: 15,
@@ -57,10 +77,23 @@ const CONFIG = {
         ENEMY: '#ff0055',
         ENEMY_GLOW: '#ff6699',
         ENEMY_VISION: 'rgba(255, 0, 85, 0.15)',
+        ENEMY_STUN: '#ffff00',
+        ENEMY_STUN_GLOW: '#ffffaa',
         CORE: '#ffff00',
         CORE_GLOW: '#ffff99',
         EXIT: '#00ff66',
         EXIT_GLOW: '#66ff99',
+        DECOY: '#ff00ff',
+        DECOY_GLOW: '#ff88ff',
+        SKILL_PHASE: '#aa00ff',
+        SKILL_EMP: '#00ffaa',
+        SKILL_DECOY: '#ff8800',
+        POWERUP_SHIELD: '#00aaff',
+        POWERUP_SHIELD_GLOW: '#66ccff',
+        POWERUP_SPEED: '#00ff88',
+        POWERUP_SPEED_GLOW: '#88ffbb',
+        POWERUP_FLASH: '#ff8800',
+        POWERUP_FLASH_GLOW: '#ffbb66',
         TEXT: '#ffffff',
         HUD_BG: 'rgba(10, 10, 26, 0.8)'
     },
@@ -81,7 +114,8 @@ const EnemyState = {
     ALERT: 'alert',
     CHASE: 'chase',
     SEARCH: 'search',
-    FATIGUE: 'fatigue'
+    FATIGUE: 'fatigue',
+    STUNNED: 'stunned'
 };
 
 const Direction = {
