@@ -147,6 +147,8 @@ class Game {
             if (this.level >= 5 && rand < 0.2) {
                 enemy = new TeleportEnemy(pos.x, pos.y);
                 enemy.teleportInterval = Math.max(3000, CONFIG.TELEPORT_INTERVAL - this.level * 200);
+            } else if (this.level >= 3 && rand < 0.35) {
+                enemy = new PhantomEnemy(pos.x, pos.y);
             } else if (rand < 0.5) {
                 enemy = new PatrolEnemy(pos.x, pos.y);
                 const patrolPath = this._generatePatrolPath(pos.cellX, pos.cellY);
