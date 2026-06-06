@@ -94,7 +94,7 @@ class TeleportEnemy extends Enemy {
             this.isWarning = true;
             this.warningTimer = CONFIG.TELEPORT_WARNING;
         } else {
-            this.teleportTimer = 0;
+            this.teleportTimer = Math.max(0, this.teleportInterval - 1000);
         }
     }
 
