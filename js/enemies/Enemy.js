@@ -96,6 +96,23 @@ class Enemy {
         }
     }
 
+    _checkWallCollisionAtPoint(px, py, maze) {
+        const cellX = Math.floor((px - CONFIG.MAZE_OFFSET_X) / CONFIG.CELL_SIZE);
+        const cellY = Math.floor((py - CONFIG.MAZE_OFFSET_Y) / CONFIG.CELL_SIZE);
+        const cell = maze.getCell(cellX, cellY);
+        if (!cell) return true;
+
+        const localX = px - CONFIG.MAZE_OFFSET_X - cellX * CONFIG.CELL_SIZE;
+        const localY = py - CONFIG.MAZE_OFFSET_Y - cellY * CONFIG.CELL_SIZE;
+        const margin = 4;
+
+        if (cell.walls[Direction.TOP] && localY < margin) return true;
+        if (cell.walls[Direction.BOTTOM] && localY > CONFIG.CELL_SIZE - margin) return true;
+        if (cell.walls[Direction.LEFT] && localX < margin) return true;
+        if (cell.walls[Direction.RIGHT] && localX > CONFIG.CELL_SIZE - margin) return true;
+        return false;
+    }
+
     _raycastVisionDistance(angle, maxDist, maze) {
         const stepSize = CONFIG.CELL_SIZE * 0.2;
         const dirX = Math.cos(angle);
@@ -106,55 +123,23 @@ class Enemy {
             const dist = i * stepSize;
             const px = this.x + dirX * dist;
             const py = this.y + dirY * dist;
-
-            const cellX = Math.floor((px - CONFIG.MAZE_OFFSET_X) / CONFIG.CELL_SIZE);
-            const cellY = Math.floor((py - CONFIG.MAZE_OFFSET_Y) / CONFIG.CELL_SIZE);
-            const cell = maze.getCell(cellX, cellY);
-            if (!cell) return dist;
-
-            const localX = px - CONFIG.MAZE_OFFSET_X - cellX * CONFIG.CELL_SIZE;
-            const localY = py - CONFIG.MAZE_OFFSET_Y - cellY * CONFIG.CELL_SIZE;
-            const margin = 4;
-
-            if (cell.walls[Direction.TOP] && localY < margin) return dist;
-            if (cell.walls[Direction.BOTTOM] && localY > CONFIG.CELL_SIZE - margin) return dist;
-            if (cell.walls[Direction.LEFT] && localX < margin) return dist;
-            if (cell.walls[Direction.RIGHT] && localX > CONFIG.CELL_SIZE - margin) return dist;
+            if (this._checkWallCollisionAtPoint(px, py, maze)) {
+                return dist;
+            }
         }
         return maxDist;
     }
 
     _hasLineOfSight(player, maze) {
-        const x0 = this.x;
-        const y0 = this.y;
-        const x1 = player.x;
-        const y1 = player.y;
-
-        const dist = Utils.distance(x0, y0, x1, y1);
+        const dx = player.x - this.x;
+        const dy = player.y - this.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
         const maxDist = CONFIG.VISION_RANGE * CONFIG.CELL_SIZE;
         if (dist > maxDist) return false;
 
-        const steps = Math.ceil(dist / (CONFIG.CELL_SIZE * 0.25));
-        for (let i = 1; i < steps; i++) {
-            const t = i / steps;
-            const px = x0 + (x1 - x0) * t;
-            const py = y0 + (y1 - y0) * t;
-
-            const cellX = Math.floor((px - CONFIG.MAZE_OFFSET_X) / CONFIG.CELL_SIZE);
-            const cellY = Math.floor((py - CONFIG.MAZE_OFFSET_Y) / CONFIG.CELL_SIZE);
-            const cell = maze.getCell(cellX, cellY);
-            if (!cell) return false;
-
-            const localX = px - CONFIG.MAZE_OFFSET_X - cellX * CONFIG.CELL_SIZE;
-            const localY = py - CONFIG.MAZE_OFFSET_Y - cellY * CONFIG.CELL_SIZE;
-            const margin = 4;
-
-            if (cell.walls[Direction.TOP] && localY < margin) return false;
-            if (cell.walls[Direction.BOTTOM] && localY > CONFIG.CELL_SIZE - margin) return false;
-            if (cell.walls[Direction.LEFT] && localX < margin) return false;
-            if (cell.walls[Direction.RIGHT] && localX > CONFIG.CELL_SIZE - margin) return false;
-        }
-        return true;
+        const angle = Math.atan2(dy, dx);
+        const rayDist = this._raycastVisionDistance(angle, maxDist, maze);
+        return rayDist >= dist;
     }
 
     _isInVisionCone(player) {
@@ -213,36 +198,15 @@ class Enemy {
     }
 
     _hasLineOfSightTo(target, maze) {
-        const x0 = this.x;
-        const y0 = this.y;
-        const x1 = target.x;
-        const y1 = target.y;
-
-        const dist = Utils.distance(x0, y0, x1, y1);
+        const dx = target.x - this.x;
+        const dy = target.y - this.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
         const maxDist = CONFIG.VISION_RANGE * CONFIG.CELL_SIZE;
         if (dist > maxDist) return false;
 
-        const steps = Math.ceil(dist / (CONFIG.CELL_SIZE * 0.25));
-        for (let i = 1; i < steps; i++) {
-            const t = i / steps;
-            const px = x0 + (x1 - x0) * t;
-            const py = y0 + (y1 - y0) * t;
-
-            const cellX = Math.floor((px - CONFIG.MAZE_OFFSET_X) / CONFIG.CELL_SIZE);
-            const cellY = Math.floor((py - CONFIG.MAZE_OFFSET_Y) / CONFIG.CELL_SIZE);
-            const cell = maze.getCell(cellX, cellY);
-            if (!cell) return false;
-
-            const localX = px - CONFIG.MAZE_OFFSET_X - cellX * CONFIG.CELL_SIZE;
-            const localY = py - CONFIG.MAZE_OFFSET_Y - cellY * CONFIG.CELL_SIZE;
-            const margin = 4;
-
-            if (cell.walls[Direction.TOP] && localY < margin) return false;
-            if (cell.walls[Direction.BOTTOM] && localY > CONFIG.CELL_SIZE - margin) return false;
-            if (cell.walls[Direction.LEFT] && localX < margin) return false;
-            if (cell.walls[Direction.RIGHT] && localX > CONFIG.CELL_SIZE - margin) return false;
-        }
-        return true;
+        const angle = Math.atan2(dy, dx);
+        const rayDist = this._raycastVisionDistance(angle, maxDist, maze);
+        return rayDist >= dist;
     }
 
     _setState(newState) {
