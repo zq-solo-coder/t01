@@ -153,8 +153,9 @@ class PhantomEnemy extends Enemy {
     _rest(deltaTime) {
     }
 
-    renderVisionRange(ctx) {
+    renderVisionRange(ctx, maze) {
         if (this.state === EnemyState.STUNNED) return;
+        if (!maze) return;
 
         ctx.save();
         ctx.globalAlpha = this.currentOpacity * 0.8;
@@ -171,11 +172,21 @@ class PhantomEnemy extends Enemy {
 
         const facingAngle = this._getFacingAngle();
         const halfCone = (CONFIG.VISION_ANGLE * Math.PI / 180) / 2;
-        const radius = CONFIG.VISION_RANGE * CONFIG.CELL_SIZE;
+        const maxRadius = CONFIG.VISION_RANGE * CONFIG.CELL_SIZE;
+        const rayCount = 40;
+        const angleStep = (halfCone * 2) / rayCount;
 
         ctx.beginPath();
         ctx.moveTo(this.x, this.y);
-        ctx.arc(this.x, this.y, radius, facingAngle - halfCone, facingAngle + halfCone);
+
+        for (let i = 0; i <= rayCount; i++) {
+            const angle = facingAngle - halfCone + i * angleStep;
+            const dist = this._raycastVisionDistance(angle, maxRadius, maze);
+            const px = this.x + Math.cos(angle) * dist;
+            const py = this.y + Math.sin(angle) * dist;
+            ctx.lineTo(px, py);
+        }
+
         ctx.closePath();
         ctx.fill();
 
@@ -201,8 +212,8 @@ class PhantomEnemy extends Enemy {
         }
     }
 
-    render(ctx) {
-        this.renderVisionRange(ctx);
+    render(ctx, maze) {
+        this.renderVisionRange(ctx, maze);
         this._renderParticles(ctx);
 
         ctx.save();

@@ -483,7 +483,7 @@ class Game {
             }
 
             for (const enemy of this.enemies) {
-                enemy.render(ctx);
+                enemy.render(ctx, this.maze);
             }
 
             this.particleSystem.render(ctx);

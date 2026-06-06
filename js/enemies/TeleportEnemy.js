@@ -159,7 +159,7 @@ class TeleportEnemy extends Enemy {
     _rest(deltaTime) {
     }
 
-    render(ctx) {
+    render(ctx, maze) {
         if (this.isWarning) {
             ctx.save();
             const pulse = Math.sin(Date.now() / 100) * 0.5 + 0.5;
@@ -181,6 +181,6 @@ class TeleportEnemy extends Enemy {
             ctx.restore();
         }
 
-        super.render(ctx);
+        super.render(ctx, maze);
     }
 }

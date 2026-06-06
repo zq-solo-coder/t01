@@ -96,6 +96,34 @@ class Enemy {
         }
     }
 
+    _raycastVisionDistance(angle, maxDist, maze) {
+        const stepSize = CONFIG.CELL_SIZE * 0.2;
+        const dirX = Math.cos(angle);
+        const dirY = Math.sin(angle);
+        const steps = Math.ceil(maxDist / stepSize);
+
+        for (let i = 1; i <= steps; i++) {
+            const dist = i * stepSize;
+            const px = this.x + dirX * dist;
+            const py = this.y + dirY * dist;
+
+            const cellX = Math.floor((px - CONFIG.MAZE_OFFSET_X) / CONFIG.CELL_SIZE);
+            const cellY = Math.floor((py - CONFIG.MAZE_OFFSET_Y) / CONFIG.CELL_SIZE);
+            const cell = maze.getCell(cellX, cellY);
+            if (!cell) return dist;
+
+            const localX = px - CONFIG.MAZE_OFFSET_X - cellX * CONFIG.CELL_SIZE;
+            const localY = py - CONFIG.MAZE_OFFSET_Y - cellY * CONFIG.CELL_SIZE;
+            const margin = 4;
+
+            if (cell.walls[Direction.TOP] && localY < margin) return dist;
+            if (cell.walls[Direction.BOTTOM] && localY > CONFIG.CELL_SIZE - margin) return dist;
+            if (cell.walls[Direction.LEFT] && localX < margin) return dist;
+            if (cell.walls[Direction.RIGHT] && localX > CONFIG.CELL_SIZE - margin) return dist;
+        }
+        return maxDist;
+    }
+
     _hasLineOfSight(player, maze) {
         const x0 = this.x;
         const y0 = this.y;
@@ -394,8 +422,9 @@ class Enemy {
         return dist < this.radius + player.radius;
     }
 
-    renderVisionRange(ctx) {
+    renderVisionRange(ctx, maze) {
         if (this.state === EnemyState.STUNNED) return;
+        if (!maze) return;
 
         ctx.save();
 
@@ -411,19 +440,29 @@ class Enemy {
 
         const facingAngle = this._getFacingAngle();
         const halfCone = (CONFIG.VISION_ANGLE * Math.PI / 180) / 2;
-        const radius = CONFIG.VISION_RANGE * CONFIG.CELL_SIZE;
+        const maxRadius = CONFIG.VISION_RANGE * CONFIG.CELL_SIZE;
+        const rayCount = 40;
+        const angleStep = (halfCone * 2) / rayCount;
 
         ctx.beginPath();
         ctx.moveTo(this.x, this.y);
-        ctx.arc(this.x, this.y, radius, facingAngle - halfCone, facingAngle + halfCone);
+
+        for (let i = 0; i <= rayCount; i++) {
+            const angle = facingAngle - halfCone + i * angleStep;
+            const dist = this._raycastVisionDistance(angle, maxRadius, maze);
+            const px = this.x + Math.cos(angle) * dist;
+            const py = this.y + Math.sin(angle) * dist;
+            ctx.lineTo(px, py);
+        }
+
         ctx.closePath();
         ctx.fill();
 
         ctx.restore();
     }
 
-    render(ctx) {
-        this.renderVisionRange(ctx);
+    render(ctx, maze) {
+        this.renderVisionRange(ctx, maze);
 
         ctx.save();
         if (this.state === EnemyState.STUNNED) {
