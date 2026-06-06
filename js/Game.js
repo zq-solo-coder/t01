@@ -307,6 +307,7 @@ class Game {
             enemy.update(this.player, this.maze, deltaTime, this.decoys);
 
             if (enemy.state === EnemyState.STUNNED) continue;
+            if (this.player.isPhaseDashing) continue;
 
             if (enemy.checkCollision(this.player)) {
                 const dmgResult = this.player.takeDamage();

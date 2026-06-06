@@ -27,14 +27,16 @@ class Player {
     }
 
     _getEffectiveSpeed() {
-        let speed = CONFIG.PLAYER_SPEED;
-        if (this.speedBoostTimer > 0) {
-            speed *= CONFIG.POWERUP_SPEED_BOOST;
-        }
+        let speed;
         if (this.isPhaseDashing) {
             speed = CONFIG.SKILL_PHASE_DASH_SPEED;
         } else if (this.isBoosting) {
             speed = CONFIG.PLAYER_BOOST_SPEED;
+        } else {
+            speed = CONFIG.PLAYER_SPEED;
+        }
+        if (this.speedBoostTimer > 0) {
+            speed *= CONFIG.POWERUP_SPEED_BOOST;
         }
         return speed;
     }
@@ -73,8 +75,6 @@ class Player {
                 this.phaseDashCooldown = CONFIG.SKILL_PHASE_DASH_COOLDOWN;
                 this.phaseDashDx = dx;
                 this.phaseDashDy = dy;
-                this.invincible = true;
-                this.invincibleTimer = Math.max(this.invincibleTimer, CONFIG.SKILL_PHASE_DASH_DURATION);
                 if (audio && audio.playBoost) audio.playBoost();
             }
         }
