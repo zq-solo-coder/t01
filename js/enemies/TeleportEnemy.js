@@ -4,7 +4,6 @@ class TeleportEnemy extends Enemy {
     constructor(x, y) {
         super(x, y, 'teleport');
         this.teleportTimer = 0;
-        this.lastTeleportReady = false;
         this.isWarning = false;
         this.warningTimer = 0;
         this.targetX = 0;
@@ -28,7 +27,6 @@ class TeleportEnemy extends Enemy {
                 this._updateCellPosition();
                 this.isWarning = false;
                 this.teleportTimer = 0;
-                this.lastTeleportReady = false;
                 this.currentPath = [];
                 this.currentPathIndex = 0;
             }
@@ -42,24 +40,13 @@ class TeleportEnemy extends Enemy {
         this.pathRecalcTimer += deltaTime;
         this.teleportTimer += deltaTime;
 
-        const teleportReadyNow = this.teleportTimer >= this.teleportInterval;
         const shouldTeleport = (this.state === EnemyState.CHASE || this.state === EnemyState.ALERT)
-            && teleportReadyNow
-            && !this.lastTeleportReady
+            && this.teleportTimer >= this.teleportInterval
             && !this.canSeePlayer;
 
         if (shouldTeleport) {
             this._tryTeleport(player, maze);
-            if (this.isWarning) {
-                this.lastTeleportReady = true;
-                return;
-            }
-        }
-
-        if (!teleportReadyNow) {
-            this.lastTeleportReady = false;
-        } else if (shouldTeleport) {
-            this.lastTeleportReady = true;
+            if (this.isWarning) return;
         }
 
         switch (this.state) {
@@ -106,8 +93,6 @@ class TeleportEnemy extends Enemy {
             this.targetY = target.y * CONFIG.CELL_SIZE + CONFIG.CELL_SIZE / 2 + CONFIG.MAZE_OFFSET_Y;
             this.isWarning = true;
             this.warningTimer = CONFIG.TELEPORT_WARNING;
-        } else {
-            this.teleportTimer = 0;
         }
     }
 
