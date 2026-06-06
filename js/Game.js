@@ -134,7 +134,7 @@ class Game {
     _spawnEnemies() {
         this.enemies = [];
         
-        const enemyCount = Math.min(2 + Math.floor(this.level / 3), 5);
+        const enemyCount = Math.min(2 + Math.floor(this.level / 3), 6);
         const avoidCells = [this.maze.startCell, this.maze.endCell];
         
         for (let i = 0; i < enemyCount; i++) {
@@ -776,8 +776,8 @@ class Game {
         const instructions = [
             'WASD / 方向键 - 移动',
             '空格键 - 加速冲刺（消耗能量）',
-            'Shift - 相位冲刺（穿怪突围，冷却8秒）',
-            'E - 震荡波 EMP（推开并眩晕怪物，冷却15秒）',
+            'Shift - 相位冲刺（穿怪突围，冷却10秒）',
+            'E - 震荡波 EMP（推开并眩晕怪物，冷却18秒）',
             'Q - 全息诱饵（吸引怪物，冷却20秒）',
             'R - 使用闪光弹（道具）',
             'ESC - 暂停游戏',
