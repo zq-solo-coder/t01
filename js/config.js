@@ -4,7 +4,7 @@ const CONFIG = {
     LOGICAL_WIDTH: 800,
     LOGICAL_HEIGHT: 600,
     
-    CELL_SIZE: 40,
+    CELL_SIZE: 48,
     MAZE_WIDTH: 15,
     MAZE_HEIGHT: 11,
     WALL_THICKNESS: 3,

@@ -28,6 +28,7 @@ class Game {
 
         this.menuTimer = 0;
         this.blinkTimer = 0;
+        this.levelHurt = false;
 
         this._setupInput();
         this._resizeCanvas();
@@ -115,6 +116,7 @@ class Game {
     _initLevel() {
         this.maze = new Maze(CONFIG.MAZE_WIDTH, CONFIG.MAZE_HEIGHT, this.level);
         this.maze.generate();
+        this.levelHurt = false;
 
         CONFIG.MAZE_OFFSET_X = this.maze.offsetX;
         CONFIG.MAZE_OFFSET_Y = this.maze.offsetY;
@@ -310,6 +312,7 @@ class Game {
 
             if (enemy.state === EnemyState.STUNNED) continue;
             if (this.player.isPhaseDashing) continue;
+            if (this.levelHurt) continue;
 
             if (enemy.checkCollision(this.player)) {
                 const dmgResult = this.player.takeDamage();
@@ -321,9 +324,10 @@ class Game {
                         CONFIG.COLORS.POWERUP_SHIELD, 25, 4, 600, 5
                     );
                 } else if (dmgResult === true) {
+                    this.levelHurt = true;
                     this.screenShake.trigger();
                     this.audio.playHurt();
-                    this.player.energy = Math.max(0, this.player.energy - 30);
+                    this.player.energy = Math.max(0, this.player.energy - 50);
                     this.particleSystem.emit(
                         this.player.x,
                         this.player.y,
